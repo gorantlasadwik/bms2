@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Realistic browser headers to prevent 403 / anti-bot blocking
+# Realistic browser headers mimicking a real Chrome session
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -16,16 +16,21 @@ DEFAULT_HEADERS = {
     ),
     "Accept": (
         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
-        "image/webp,image/apng,*/*;q=0.8"
+        "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
     ),
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9,te;q=0.8,hi;q=0.7",
     "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://in.bookmyshow.com/",
+    "Origin": "https://in.bookmyshow.com",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-Site": "same-origin",
     "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
     "Cache-Control": "max-age=0",
 }
 
@@ -47,6 +52,16 @@ class BookMyShowChecker:
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update(DEFAULT_HEADERS)
+        self.warmed_up = False
+
+    def warmup_session(self):
+        """Hits BookMyShow home page to acquire session cookies and bypass initial 403"""
+        try:
+            logger.info("Warming up BookMyShow session cookies...")
+            self.session.get("https://in.bookmyshow.com/", timeout=self.timeout)
+            self.warmed_up = True
+        except Exception as e:
+            logger.debug(f"Warmup warning: {e}")
 
     def parse_date_from_url(self, url: str) -> str:
         """Extract date from URL like 20260731 -> 31 Jul"""
@@ -73,7 +88,6 @@ class BookMyShowChecker:
 
         if soup and soup.title and soup.title.string:
             title_text = soup.title.string.strip()
-            # If title is specific to movie, return cleaned version
             title_clean = re.sub(
                 r"\s*\|\s*(BookMyShow|Movie Tickets|Showtimes|Cinema).*$",
                 "",
@@ -85,10 +99,12 @@ class BookMyShowChecker:
 
         return "Spider-Man"
 
-
     def check_url(self, url: str) -> CheckResult:
         date_str = self.parse_date_from_url(url)
         logger.info(f"Checking URL for date [{date_str}]: {url}")
+
+        if not self.warmed_up:
+            self.warmup_session()
 
         try:
             response = self.session.get(
@@ -96,6 +112,13 @@ class BookMyShowChecker:
                 timeout=self.timeout,
                 allow_redirects=True
             )
+
+            # Retry once if initial request hit 403
+            if response.status_code == 403:
+                logger.info(f"Received 403 for [{date_str}]. Retrying with fresh session warmup...")
+                self.warmup_session()
+                response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
+
             status_code = response.status_code
             final_url = response.url
 
@@ -141,7 +164,6 @@ class BookMyShowChecker:
                 )
 
             # Check 1: Final URL redirection check
-            # If redirected to main page or errors page away from buytickets format
             original_code = url.strip("/").split("/")[-1]
             if "buytickets" not in final_url and original_code not in final_url:
                 logger.info(f"URL redirected away from ticket booking: {final_url}")
@@ -184,7 +206,6 @@ class BookMyShowChecker:
                     )
 
             # Check 3: Positive availability indicators
-            # Look for showtimes containers, time buttons, seat layout links, or active session data
             showtime_elements = soup.select(
                 ".showtime-pill, .time-pill, .showtimes, .php-showtime, "
                 "[data-showtime], a[href*='seat-layout'], button[data-session-id], "
@@ -218,7 +239,7 @@ class BookMyShowChecker:
                             reason="Found available showtimes in embedded JSON data",
                         )
 
-            # Check 5: General fallback indicator - presence of time patterns (e.g. 10:30 AM, 07:15 PM)
+            # Check 5: General fallback indicator
             time_pattern = re.compile(r"\b(1[0-2]|0?[1-9]):[0-5][0-9]\s*(AM|PM)\b", re.IGNORECASE)
             time_matches = time_pattern.findall(response.text)
             if len(time_matches) >= 2:
