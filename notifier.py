@@ -174,17 +174,18 @@ class SMSNotifier:
 
         sent_any = False
 
-        # Channel 1: Fast2SMS Text Message
-        if self.send_fast2sms(movie_title, date_str, booking_url):
-            sent_any = True
-
-        # Channel 2: Automated Voice Phone Call
+        # PRIORITY #1: Automated Voice Phone Call (Rings your phone immediately!)
         if self.send_voice_call(movie_title, date_str):
             sent_any = True
 
-        # Channel 3: ntfy.sh Push Alert
+        # PRIORITY #2: Fast2SMS Text Message
+        if self.send_fast2sms(movie_title, date_str, booking_url):
+            sent_any = True
+
+        # PRIORITY #3: ntfy.sh Push Alert
         if self.send_ntfy(movie_title, date_str, booking_url):
             sent_any = True
+
 
         if not sent_any:
             logger.warning("No notification service dispatched successfully.")
