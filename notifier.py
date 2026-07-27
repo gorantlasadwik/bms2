@@ -80,10 +80,14 @@ class SMSNotifier:
             "Title": f"{movie_title} Bookings LIVE!",
             "Priority": "high",
             "Tags": "ticket,clapper",
-            "Actions": f"view, Open BookMyShow, {booking_url}",
         }
+        clean_url = booking_url.split()[0]
+        if clean_url.startswith("http://") or clean_url.startswith("https://"):
+            headers["Actions"] = f"view, Open BookMyShow, {clean_url}"
+
         if self.ntfy_token:
             headers["Authorization"] = f"Bearer {self.ntfy_token}"
+
 
         body = f"🚨 Bookings are LIVE for {date_str}!\nOpen BookMyShow: {booking_url}"
 

@@ -7,6 +7,12 @@ import requests
 from bs4 import BeautifulSoup
 
 try:
+    from curl_cffi import requests as curl_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+
+try:
     import cloudscraper
     HAS_CLOUDSCRAPER = True
 except ImportError:
@@ -14,30 +20,19 @@ except ImportError:
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Realistic desktop Chrome browser headers
-DEFAULT_HEADERS = {
+# Mobile Web Headers that bypass BookMyShow Cloudflare 403 blocks
+MOBILE_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
     ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
-        "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://in.bookmyshow.com/",
     "Origin": "https://in.bookmyshow.com",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
-    "sec-ch-ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "Cache-Control": "max-age=0",
+    "x-app-code": "WEB",
+    "x-bms-app-name": "WEB",
+    "x-city-code": "CHEN",
 }
 
 
@@ -56,37 +51,33 @@ class CheckResult:
 class BookMyShowChecker:
     def __init__(self, timeout: int = 10):
         self.timeout = timeout
+        self.use_curl_cffi = HAS_CURL_CFFI
         self._init_scraper()
 
     def _init_scraper(self):
-        """Initializes cloudscraper to bypass Cloudflare 403 anti-bot challenges"""
+        """Initializes scraper using TLS impersonation (curl_cffi) or cloudscraper"""
+        if HAS_CURL_CFFI:
+            try:
+                self.session = curl_requests.Session(impersonate="chrome")
+                self.session.headers.update(MOBILE_HEADERS)
+                logger.info("curl_cffi TLS impersonation initialized for BookMyShow checks.")
+                return
+            except Exception as e:
+                logger.warning(f"curl_cffi init error: {e}")
+
         if HAS_CLOUDSCRAPER:
             try:
                 self.session = cloudscraper.create_scraper(
-                    browser={
-                        "browser": "chrome",
-                        "platform": "windows",
-                        "desktop": True,
-                    }
+                    browser={"browser": "chrome", "platform": "windows", "desktop": True}
                 )
-                logger.info("Cloudscraper initialized to bypass Cloudflare 403 blocks.")
+                self.session.headers.update(MOBILE_HEADERS)
+                logger.info("Cloudscraper initialized for BookMyShow checks.")
+                return
             except Exception as e:
-                logger.warning(f"Cloudscraper init fallback to requests.Session: {e}")
-                self.session = requests.Session()
-        else:
-            self.session = requests.Session()
+                logger.warning(f"Cloudscraper init error: {e}")
 
-        self.session.headers.update(DEFAULT_HEADERS)
-        self.warmed_up = False
-
-    def warmup_session(self):
-        """Hits BookMyShow home page to acquire session cookies"""
-        try:
-            logger.info("Warming up BookMyShow session cookies...")
-            self.session.get("https://in.bookmyshow.com/", timeout=self.timeout)
-            self.warmed_up = True
-        except Exception as e:
-            logger.debug(f"Warmup warning: {e}")
+        self.session = requests.Session()
+        self.session.headers.update(MOBILE_HEADERS)
 
     def parse_date_from_url(self, url: str) -> str:
         """Extract date from URL like 20260731 -> 31 Jul"""
@@ -124,29 +115,35 @@ class BookMyShowChecker:
 
         return "Spider-Man"
 
+    def fetch_url(self, url: str):
+        """Fetches URL using curl_cffi or standard requests session"""
+        if HAS_CURL_CFFI:
+            try:
+                return curl_requests.get(
+                    url,
+                    headers=MOBILE_HEADERS,
+                    impersonate="chrome",
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                )
+            except Exception as e:
+                logger.debug(f"curl_requests fallback: {e}")
+
+        return self.session.get(
+            url,
+            headers=MOBILE_HEADERS,
+            timeout=self.timeout,
+            allow_redirects=True,
+        )
+
     def check_url(self, url: str) -> CheckResult:
         date_str = self.parse_date_from_url(url)
         logger.info(f"Checking URL for date [{date_str}]: {url}")
 
-        if not self.warmed_up:
-            self.warmup_session()
-
         try:
-            response = self.session.get(
-                url,
-                timeout=self.timeout,
-                allow_redirects=True
-            )
-
-            # Retry once with fresh scraper if 403 occurs
-            if response.status_code == 403:
-                logger.info(f"Received 403 for [{date_str}]. Re-initializing scraper session...")
-                self._init_scraper()
-                self.warmup_session()
-                response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
-
+            response = self.fetch_url(url)
             status_code = response.status_code
-            final_url = response.url
+            final_url = str(response.url)
 
             # Rate limit / blocking handling
             if status_code in (403, 429):
