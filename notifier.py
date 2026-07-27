@@ -15,7 +15,7 @@ except ImportError:
 
 
 class SMSNotifier:
-    """Notification dispatcher supporting Fast2SMS, Twilio Voice Calls, and ntfy.sh push alerts"""
+    """Notification dispatcher supporting Fast2SMS, Twilio Voice Calls, and ntfy.sh push alerts for multiple recipients"""
 
     def __init__(
         self,
@@ -48,23 +48,20 @@ class SMSNotifier:
                 logger.error(f"Failed to initialize Twilio client: {e}")
 
     def send_voice_call(self, movie_title: str, date_str: str) -> bool:
-        """Triggers an automated voice phone call via Twilio Voice API"""
+        """Triggers automated voice phone calls via Twilio Voice API to all configured recipients"""
         if not TWILIO_AVAILABLE or not self.twilio_account_sid or not self.twilio_auth_token:
             logger.info("Twilio credentials or twilio package missing. Skipping voice call.")
             return False
 
-        call_to = os.getenv("PHONE_CALL_TO") or self.fast2sms_number or self.whatsapp_to
+        call_to_env = os.getenv("PHONE_CALL_TO") or self.fast2sms_number or self.whatsapp_to
         call_from = os.getenv("TWILIO_CALL_FROM") or self.twilio_from
 
-        if not call_to or not call_from:
+        if not call_to_env or not call_from:
             logger.warning("PHONE_CALL_TO or TWILIO_CALL_FROM not set. Skipping voice call.")
             return False
 
-        # Clean phone numbers to E.164 format
-        call_to_clean = call_to.replace("whatsapp:", "").strip()
-        if not call_to_clean.startswith("+"):
-            call_to_clean = f"+91{call_to_clean}"
-
+        # Support comma-separated multiple phone numbers
+        call_to_list = [num.strip() for num in call_to_env.split(",") if num.strip()]
         call_from_clean = call_from.replace("whatsapp:", "").strip()
 
         twiml_speech = (
@@ -78,19 +75,27 @@ class SMSNotifier:
             if not self.twilio_client:
                 self.twilio_client = Client(self.twilio_account_sid, self.twilio_auth_token)
 
-            call = self.twilio_client.calls.create(
-                twiml=twiml_speech,
-                to=call_to_clean,
-                from_=call_from_clean,
-            )
-            logger.info(f"📞 Automated Phone Call placed successfully! Call SID: {call.sid}")
-            return True
+            sent_any = False
+            for target_phone in call_to_list:
+                call_to_clean = target_phone.replace("whatsapp:", "").strip()
+                if not call_to_clean.startswith("+"):
+                    call_to_clean = f"+91{call_to_clean}"
+
+                call = self.twilio_client.calls.create(
+                    twiml=twiml_speech,
+                    to=call_to_clean,
+                    from_=call_from_clean,
+                )
+                logger.info(f"📞 Automated Phone Call placed to {call_to_clean}! Call SID: {call.sid}")
+                sent_any = True
+
+            return sent_any
         except Exception as e:
             logger.error(f"Error placing automated Twilio voice call: {e}")
             return False
 
     def send_fast2sms(self, movie_title: str, date_str: str, booking_url: str) -> bool:
-        """Send SMS notification via Fast2SMS Quick Route (bulkV2)"""
+        """Send SMS notification via Fast2SMS Quick Route (bulkV2) to single or multiple numbers"""
         if not self.fast2sms_api_key or not self.fast2sms_number:
             logger.warning("Fast2SMS credentials not configured. Skipping SMS dispatch.")
             return False
@@ -102,12 +107,15 @@ class SMSNotifier:
         }
 
         sms_text = f"ALERT: {movie_title} bookings LIVE for {date_str}! Open BookMyShow: {booking_url}"
-        clean_number = self.fast2sms_number.replace("+91", "").strip()
+        
+        # Support comma-separated multiple numbers for Fast2SMS
+        raw_numbers = [n.replace("+91", "").strip() for n in self.fast2sms_number.split(",") if n.strip()]
+        clean_numbers = ",".join(raw_numbers)
 
         payload = {
             "route": "q",
             "message": sms_text,
-            "numbers": clean_number,
+            "numbers": clean_numbers,
         }
 
         try:
@@ -115,7 +123,7 @@ class SMSNotifier:
             if response.status_code == 200:
                 data = response.json()
                 if data.get("return") is True:
-                    logger.info(f"📨 Fast2SMS notification sent! Response: {data.get('message')}")
+                    logger.info(f"📨 Fast2SMS notification sent to [{clean_numbers}]! Response: {data.get('message')}")
                     return True
                 else:
                     logger.error(f"Fast2SMS response error: {data}")
