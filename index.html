@@ -167,10 +167,16 @@
             box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
         }
 
+        .btn-call {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+        }
+
         .btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(14, 165, 233, 0.4);
         }
+
 
         .btn:active {
             transform: translateY(0);
@@ -315,10 +321,17 @@
                 <div class="status-title">Monitoring 3 Target Dates</div>
                 <div class="status-time" id="lastChecked">Last checked: Just now</div>
             </div>
-            <button class="btn" id="sendBtn" onclick="triggerNotification()">
-                <span id="btnIcon">⚡</span>
-                <span id="btnText">Send Instant Status Alert</span>
-            </button>
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                <button class="btn" id="sendBtn" onclick="triggerNotification()">
+                    <span id="btnIcon">⚡</span>
+                    <span id="btnText">Send Status Alert</span>
+                </button>
+                <button class="btn btn-call" id="callBtn" onclick="triggerVoiceCall()">
+                    <span id="callIcon">📞</span>
+                    <span id="callText">Test Voice Call</span>
+                </button>
+            </div>
+
         </div>
 
         <div class="cards-grid" id="cardsGrid">
@@ -410,7 +423,32 @@
             }
         }
 
+        async function triggerVoiceCall() {
+            const btn = document.getElementById('callBtn');
+            const btnText = document.getElementById('callText');
+            const btnIcon = document.getElementById('callIcon');
+
+            btn.disabled = true;
+            btnIcon.className = 'spinner';
+            btnIcon.innerText = '';
+            btnText.innerText = 'Calling Phone...';
+
+            try {
+                const res = await fetch('/api/test-call', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.message || 'Phone call placed!', !data.success);
+            } catch (e) {
+                showToast('Failed to place phone call. Check credentials.', true);
+            } finally {
+                btn.disabled = false;
+                btnIcon.className = '';
+                btnIcon.innerText = '📞';
+                btnText.innerText = 'Test Voice Call';
+            }
+        }
+
         async function restartMonitor() {
+
             try {
                 const res = await fetch('/api/restart-monitor', { method: 'POST' });
                 const data = await res.json();

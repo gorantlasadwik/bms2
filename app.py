@@ -112,6 +112,7 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        global global_notifier
         parsed_path = self.path.split("?")[0]
 
         if parsed_path in ("/api/send-status", "/api/check-now"):
@@ -119,7 +120,6 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             logger.info("⚡ Manual status alert button clicked on web dashboard!")
             results = execute_check_cycle()
 
-            global global_notifier
             if not global_notifier:
                 global_notifier = SMSNotifier()
 
@@ -149,6 +149,24 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
 
+        if parsed_path == "/api/test-call":
+            logger.info("📞 Manual test voice call requested via web dashboard!")
+            if not global_notifier:
+                global_notifier = SMSNotifier()
+
+
+            sent = global_notifier.send_voice_call("Spider-Man", "TEST CALL (WEB DASHBOARD)")
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            if sent:
+                resp = {"success": True, "message": "📞 Phone call placed successfully to your mobile!"}
+            else:
+                resp = {"success": False, "message": "⚠️ Failed to place call. Ensure Twilio keys are saved in Render."}
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
         if parsed_path == "/api/restart-monitor":
             # Restart monitor if auto-stopped
             logger.info("🔄 Monitor restart requested via web dashboard!")
@@ -162,6 +180,7 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             resp = {"success": True, "message": "Monitoring service resumed!"}
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
+
 
         self.send_response(404)
         self.end_headers()
