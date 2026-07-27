@@ -53,7 +53,9 @@ def execute_check_cycle() -> List[Dict[str, Any]]:
     urls = APP_STATE["urls"]
     results_list = []
 
-    for url in urls:
+    for idx, url in enumerate(urls):
+        if idx > 0:
+            time.sleep(1.5)
         r: CheckResult = global_checker.check_url(url)
         item = {
             "url": r.url,
@@ -66,6 +68,7 @@ def execute_check_cycle() -> List[Dict[str, Any]]:
             "error": r.error,
         }
         results_list.append(item)
+
 
     APP_STATE["results"] = results_list
     APP_STATE["last_check_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
