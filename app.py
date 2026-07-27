@@ -5,13 +5,14 @@ import logging
 import threading
 import http.server
 import socketserver
+import json
 import urllib.request
-from typing import Dict
+from datetime import datetime
+from typing import Dict, List, Any
 from dotenv import load_dotenv
 
 from checker import BookMyShowChecker, CheckResult
 from notifier import SMSNotifier
-
 
 # Configure structured stdout logging for Render
 logging.basicConfig(
@@ -30,32 +31,138 @@ DEFAULT_URLS = [
     "https://in.bookmyshow.com/cinemas/CHEN/inox-the-marina-mall-omr/buytickets/INTO/20260801",
 ]
 
+# Shared Global State for Dashboard & API
+APP_STATE: Dict[str, Any] = {
+    "status": "running",
+    "last_check_time": "Initializing...",
+    "results": [],
+    "urls": DEFAULT_URLS,
+}
 
-class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
-    """Lightweight HTTP server handler to keep Render active and provide status"""
+# Global instances
+global_checker: BookMyShowChecker = None  # type: ignore
+global_notifier: SMSNotifier = None      # type: ignore
+
+
+def execute_check_cycle() -> List[Dict[str, Any]]:
+    """Performs a live check cycle of all target URLs and updates APP_STATE"""
+    global APP_STATE, global_checker
+    if not global_checker:
+        global_checker = BookMyShowChecker(timeout=10)
+
+    urls = APP_STATE["urls"]
+    results_list = []
+
+    for url in urls:
+        r: CheckResult = global_checker.check_url(url)
+        item = {
+            "url": r.url,
+            "is_available": r.is_available,
+            "status_code": r.status_code,
+            "final_url": r.final_url,
+            "date_str": r.date_str,
+            "movie_title": r.movie_title,
+            "reason": r.reason,
+            "error": r.error,
+        }
+        results_list.append(item)
+
+    APP_STATE["results"] = results_list
+    APP_STATE["last_check_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return results_list
+
+
+class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
+    """HTTP server handler serving the web frontend dashboard & REST API"""
 
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "application/json")
+        parsed_path = self.path.split("?")[0]
+
+        if parsed_path in ("/", "/index.html", "/dashboard"):
+            # Serve frontend dashboard
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            try:
+                html_path = os.path.join(os.path.dirname(__file__), "index.html")
+                if os.path.exists(html_path):
+                    with open(html_path, "rb") as f:
+                        self.wfile.write(f.read())
+                else:
+                    self.wfile.write(b"<h1>BookMyShow Monitor Dashboard</h1><p>index.html missing</p>")
+            except Exception as e:
+                self.wfile.write(f"Error loading dashboard: {e}".encode("utf-8"))
+            return
+
+        if parsed_path in ("/api/status", "/health"):
+            # Return current status JSON
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            response_bytes = json.dumps(APP_STATE, indent=2).encode("utf-8")
+            self.wfile.write(response_bytes)
+            return
+
+        # Fallback 404
+        self.send_response(404)
         self.end_headers()
-        response_data = '{"status":"active", "service":"BookMyShow Monitor"}'
-        self.wfile.write(response_data.encode("utf-8"))
+
+    def do_POST(self):
+        parsed_path = self.path.split("?")[0]
+
+        if parsed_path in ("/api/send-status", "/api/check-now"):
+            # Trigger live check & send notification
+            logger.info("⚡ Manual status alert button clicked on web dashboard!")
+            results = execute_check_cycle()
+
+            global global_notifier
+            if not global_notifier:
+                global_notifier = SMSNotifier()
+
+            # Compile summary string
+            available_dates = [r["date_str"] for r in results if r["is_available"]]
+            if available_dates:
+                summary = f"BOOKINGS LIVE for {', '.join(available_dates)}!"
+            else:
+                summary = "Bookings NOT OPEN yet (Checked: 30 Jul, 31 Jul, 1 Aug)."
+
+            # Dispatch notification
+            sent = global_notifier.send_notification(
+                movie_title="Spider-Man",
+                date_str="STATUS UPDATE",
+                booking_url=f"https://in.bookmyshow.com/... ({summary})",
+            )
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            resp = {
+                "success": True,
+                "message": f"Status alert dispatched to your phone! {summary}",
+                "dispatched": sent,
+                "results": results,
+            }
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
+        self.send_response(404)
+        self.end_headers()
 
     def log_message(self, format, *args):
-        # Silence routine HTTP access logs from noise
+        # Silence routine HTTP GET logs
         pass
 
 
 def start_anti_sleep_server(port: int):
-    """Starts embedded HTTP server to prevent Render from sleeping after 15 minutes"""
+    """Starts embedded HTTP server serving Dashboard & API on port"""
 
     def run_server():
         try:
-            with socketserver.TCPServer(("0.0.0.0", port), HealthCheckHandler) as httpd:
-                logger.info(f"⚡ Anti-Sleep Activator HTTP server started on port {port}")
+            with socketserver.TCPServer(("0.0.0.0", port), DashboardHTTPHandler) as httpd:
+                logger.info(f"⚡ Dashboard & Anti-Sleep HTTP server started on port {port}")
                 httpd.serve_forever()
         except Exception as e:
-            logger.error(f"Failed to start anti-sleep HTTP server on port {port}: {e}")
+            logger.error(f"Failed to start HTTP server on port {port}: {e}")
 
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
@@ -82,6 +189,10 @@ def start_self_ping_activator(port: int, interval_seconds: int = 300):
 
 def main():
     load_dotenv()
+    global global_checker, global_notifier, APP_STATE
+
+    global_checker = BookMyShowChecker(timeout=10)
+    global_notifier = SMSNotifier()
 
     # Load configuration
     check_interval = int(os.getenv("CHECK_INTERVAL", "30"))
@@ -94,9 +205,12 @@ def main():
     else:
         urls = DEFAULT_URLS
 
+    APP_STATE["urls"] = urls
+
     logger.info("=" * 60)
-    logger.info("🚀 Starting BookMyShow Monitor Worker")
+    logger.info("🚀 Starting BookMyShow Monitor Worker & Web Dashboard")
     logger.info(f"⏱  Check Interval: {check_interval} seconds")
+    logger.info(f"🌐 Dashboard URL: http://localhost:{port}")
     logger.info(f"🔗 Monitoring {len(urls)} target URLs:")
     for u in urls:
         logger.info(f"   - {u}")
@@ -105,10 +219,6 @@ def main():
     # Launch anti-sleep activator HTTP server & self-pinger
     start_anti_sleep_server(port)
     start_self_ping_activator(port)
-
-    checker = BookMyShowChecker(timeout=10)
-    notifier = SMSNotifier()
-
 
     # Tracks notification status per URL: { url: is_currently_notified }
     notification_state: Dict[str, bool] = {url: False for url in urls}
@@ -119,40 +229,43 @@ def main():
         cycle_start_time = time.time()
         logger.info("🔍 Beginning URL check cycle...")
 
-        for url in urls:
-            result: CheckResult = checker.check_url(url)
+        # Perform live check cycle
+        results_list = execute_check_cycle()
+
+        for item in results_list:
+            url = item["url"]
+            is_available = item["is_available"]
+            date_str = item["date_str"]
 
             logger.info(
-                f"Result [{result.date_str}]: available={result.is_available} | "
-                f"status={result.status_code} | reason='{result.reason}'"
+                f"Result [{date_str}]: available={is_available} | "
+                f"status={item['status_code']} | reason='{item['reason']}'"
             )
 
-            if result.error:
+            if item["error"]:
                 consecutive_errors += 1
             else:
                 consecutive_errors = max(0, consecutive_errors - 1)
 
             # Prevent duplicate alerts
-            if result.is_available:
+            if is_available:
                 if not notification_state.get(url, False):
-                    logger.info(f"🎉 New ticket availability detected for date {result.date_str}!")
-                    sent = notifier.send_notification(
-                        movie_title=result.movie_title,
-                        date_str=result.date_str,
-                        booking_url=result.final_url,
+                    logger.info(f"🎉 New ticket availability detected for date {date_str}!")
+                    sent = global_notifier.send_notification(
+                        movie_title=item["movie_title"],
+                        date_str=date_str,
+                        booking_url=item["final_url"],
                     )
                     if sent or True:
-                        # Mark as notified to avoid spamming
                         notification_state[url] = True
                 else:
                     logger.info(
-                        f"Tickets still available for [{result.date_str}], alert already sent."
+                        f"Tickets still available for [{date_str}], alert already sent."
                     )
             else:
-                # If tickets become unavailable again, reset state so future opening sends alert
                 if notification_state.get(url, False):
                     logger.info(
-                        f"State change: Tickets for [{result.date_str}] no longer available. Resetting alert state."
+                        f"State change: Tickets for [{date_str}] no longer available. Resetting alert state."
                     )
                     notification_state[url] = False
 
