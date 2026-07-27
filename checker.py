@@ -186,10 +186,10 @@ class BookMyShowChecker:
                     error=f"HTTP_{status_code}"
                 )
 
-            # Check 1: Final URL redirection check
+            # Check 1: Final URL redirection check & Target Date Code validation
             original_code = url.strip("/").split("/")[-1]
-            if "buytickets" not in final_url and original_code not in final_url:
-                logger.info(f"URL redirected away from ticket booking: {final_url}")
+            if "buytickets" not in final_url:
+                logger.info(f"URL redirected away from ticket booking page: {final_url}")
                 return CheckResult(
                     url=url,
                     is_available=False,
@@ -199,6 +199,21 @@ class BookMyShowChecker:
                     movie_title="Spider-Man",
                     reason="Redirected away from booking page",
                 )
+
+            # If target URL specifies a date code (e.g. 20260731), ensure final_url still points to the same date code
+            if original_code.isdigit() and len(original_code) == 8:
+                if original_code not in final_url:
+                    logger.info(f"BookMyShow redirected target date [{original_code}] to fallback date page [{final_url}]")
+                    return CheckResult(
+                        url=url,
+                        is_available=False,
+                        status_code=status_code,
+                        final_url=final_url,
+                        date_str=date_str,
+                        movie_title="Spider-Man",
+                        reason=f"Bookings for {date_str} not open yet (redirected to current date)",
+                    )
+
 
             # Parse HTML content
             soup = BeautifulSoup(response.text, "html.parser")
