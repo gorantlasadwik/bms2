@@ -187,6 +187,36 @@ def start_self_ping_activator(port: int, interval_seconds: int = 300):
     activator_thread.start()
 
 
+def start_public_render_keepalive(interval_seconds: int = 600):
+    """Pings the public Render HTTPS URL every 10 minutes to prevent Render 15-minute sleep"""
+
+    def run_public_activator():
+        render_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER_SERVICE_URL")
+        if not render_url:
+            logger.info("ℹ️ RENDER_EXTERNAL_URL not set. (Add RENDER_EXTERNAL_URL=https://bms2.onrender.com in Render env to auto-ping public URL).")
+            return
+
+        target_url = render_url.rstrip("/") + "/health"
+        logger.info(f"⚡ Public 24/7 Keep-Alive Activator started for: {target_url}")
+
+        while True:
+            time.sleep(interval_seconds)
+            try:
+                req = urllib.request.Request(
+                    target_url,
+                    headers={"User-Agent": "Render247PublicKeepAlive/1.0"}
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    if resp.status == 200:
+                        logger.info(f"⚡ Public 24/7 Keep-Alive ping successful ({target_url})")
+            except Exception as e:
+                logger.warning(f"Public Keep-Alive ping attempt: {e}")
+
+    activator_thread = threading.Thread(target=run_public_activator, daemon=True)
+    activator_thread.start()
+
+
+
 def main():
     load_dotenv()
     global global_checker, global_notifier, APP_STATE
@@ -216,9 +246,11 @@ def main():
         logger.info(f"   - {u}")
     logger.info("=" * 60)
 
-    # Launch anti-sleep activator HTTP server & self-pinger
+    # Launch anti-sleep activator HTTP server & self-pingers
     start_anti_sleep_server(port)
     start_self_ping_activator(port)
+    start_public_render_keepalive(interval_seconds=600)
+
 
     # Tracks notification status per URL: { url: is_currently_notified }
     notification_state: Dict[str, bool] = {url: False for url in urls}

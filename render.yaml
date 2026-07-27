@@ -9,6 +9,8 @@ services:
     envVars:
       - key: CHECK_INTERVAL
         value: "30"
+      - key: RENDER_EXTERNAL_URL
+        sync: false
       - key: FAST2SMS_API_KEY
         sync: false
       - key: FAST2SMS_NUMBER
