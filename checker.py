@@ -6,9 +6,15 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 
+try:
+    import cloudscraper
+    HAS_CLOUDSCRAPER = True
+except ImportError:
+    HAS_CLOUDSCRAPER = False
+
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Realistic browser headers mimicking a real Chrome session
+# Realistic desktop Chrome browser headers
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -18,7 +24,7 @@ DEFAULT_HEADERS = {
         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
         "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
     ),
-    "Accept-Language": "en-US,en;q=0.9,te;q=0.8,hi;q=0.7",
+    "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://in.bookmyshow.com/",
     "Origin": "https://in.bookmyshow.com",
@@ -50,12 +56,31 @@ class CheckResult:
 class BookMyShowChecker:
     def __init__(self, timeout: int = 10):
         self.timeout = timeout
-        self.session = requests.Session()
+        self._init_scraper()
+
+    def _init_scraper(self):
+        """Initializes cloudscraper to bypass Cloudflare 403 anti-bot challenges"""
+        if HAS_CLOUDSCRAPER:
+            try:
+                self.session = cloudscraper.create_scraper(
+                    browser={
+                        "browser": "chrome",
+                        "platform": "windows",
+                        "desktop": True,
+                    }
+                )
+                logger.info("Cloudscraper initialized to bypass Cloudflare 403 blocks.")
+            except Exception as e:
+                logger.warning(f"Cloudscraper init fallback to requests.Session: {e}")
+                self.session = requests.Session()
+        else:
+            self.session = requests.Session()
+
         self.session.headers.update(DEFAULT_HEADERS)
         self.warmed_up = False
 
     def warmup_session(self):
-        """Hits BookMyShow home page to acquire session cookies and bypass initial 403"""
+        """Hits BookMyShow home page to acquire session cookies"""
         try:
             logger.info("Warming up BookMyShow session cookies...")
             self.session.get("https://in.bookmyshow.com/", timeout=self.timeout)
@@ -113,9 +138,10 @@ class BookMyShowChecker:
                 allow_redirects=True
             )
 
-            # Retry once if initial request hit 403
+            # Retry once with fresh scraper if 403 occurs
             if response.status_code == 403:
-                logger.info(f"Received 403 for [{date_str}]. Retrying with fresh session warmup...")
+                logger.info(f"Received 403 for [{date_str}]. Re-initializing scraper session...")
+                self._init_scraper()
                 self.warmup_session()
                 response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
 
@@ -263,7 +289,7 @@ class BookMyShowChecker:
                 reason="No active showtimes or booking buttons detected",
             )
 
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             logger.error(f"Network error checking {url}: {e}")
             return CheckResult(
                 url=url,
