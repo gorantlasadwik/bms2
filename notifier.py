@@ -5,9 +5,17 @@ import requests
 
 logger = logging.getLogger("BookMyShowMonitor")
 
+try:
+    from twilio.rest import Client
+    TWILIO_AVAILABLE = True
+except ImportError:
+    Client = None  # type: ignore
+    TWILIO_AVAILABLE = False
+    logger.warning("Twilio package not installed. Automated voice call feature requires twilio package.")
+
 
 class SMSNotifier:
-    """Notification dispatcher supporting Fast2SMS and optional ntfy.sh push alerts"""
+    """Notification dispatcher supporting Fast2SMS, Twilio Voice Calls, and ntfy.sh push alerts"""
 
     def __init__(
         self,
@@ -22,12 +30,64 @@ class SMSNotifier:
         self.ntfy_topic = ntfy_topic or os.getenv("NTFY_TOPIC")
         self.ntfy_token = ntfy_token or os.getenv("NTFY_TOKEN")
 
-        if self.fast2sms_api_key and self.fast2sms_number:
-            logger.info("Fast2SMS notifier configured successfully.")
-        else:
-            logger.warning(
-                "FAST2SMS_API_KEY or FAST2SMS_NUMBER missing in environment variables."
+        # Twilio credentials for voice call alerts
+        self.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        self.twilio_from = os.getenv("TWILIO_FROM") or os.getenv("TWILIO_WHATSAPP_FROM")
+        self.whatsapp_to = os.getenv("WHATSAPP_TO")
+
+        self.twilio_client: Optional[Client] = None
+        self._init_twilio()
+
+    def _init_twilio(self):
+        if TWILIO_AVAILABLE and self.twilio_account_sid and self.twilio_auth_token:
+            try:
+                self.twilio_client = Client(self.twilio_account_sid, self.twilio_auth_token)
+                logger.info("Twilio Voice & Client initialized successfully.")
+            except Exception as e:
+                logger.error(f"Failed to initialize Twilio client: {e}")
+
+    def send_voice_call(self, movie_title: str, date_str: str) -> bool:
+        """Triggers an automated voice phone call via Twilio Voice API"""
+        if not TWILIO_AVAILABLE or not self.twilio_account_sid or not self.twilio_auth_token:
+            logger.info("Twilio credentials or twilio package missing. Skipping voice call.")
+            return False
+
+        call_to = os.getenv("PHONE_CALL_TO") or self.fast2sms_number or self.whatsapp_to
+        call_from = os.getenv("TWILIO_CALL_FROM") or self.twilio_from
+
+        if not call_to or not call_from:
+            logger.warning("PHONE_CALL_TO or TWILIO_CALL_FROM not set. Skipping voice call.")
+            return False
+
+        # Clean phone numbers to E.164 format
+        call_to_clean = call_to.replace("whatsapp:", "").strip()
+        if not call_to_clean.startswith("+"):
+            call_to_clean = f"+91{call_to_clean}"
+
+        call_from_clean = call_from.replace("whatsapp:", "").strip()
+
+        twiml_speech = (
+            f"<Response><Say voice='alice' loop='2'>"
+            f"Emergency Alert! {movie_title} ticket bookings are now LIVE on BookMyShow for {date_str}! "
+            f"Open BookMyShow immediately to book your tickets!"
+            f"</Say></Response>"
+        )
+
+        try:
+            if not self.twilio_client:
+                self.twilio_client = Client(self.twilio_account_sid, self.twilio_auth_token)
+
+            call = self.twilio_client.calls.create(
+                twiml=twiml_speech,
+                to=call_to_clean,
+                from_=call_from_clean,
             )
+            logger.info(f"📞 Automated Phone Call placed successfully! Call SID: {call.sid}")
+            return True
+        except Exception as e:
+            logger.error(f"Error placing automated Twilio voice call: {e}")
+            return False
 
     def send_fast2sms(self, movie_title: str, date_str: str, booking_url: str) -> bool:
         """Send SMS notification via Fast2SMS Quick Route (bulkV2)"""
@@ -41,10 +101,7 @@ class SMSNotifier:
             "Content-Type": "application/json",
         }
 
-        # Format concise SMS body
         sms_text = f"ALERT: {movie_title} bookings LIVE for {date_str}! Open BookMyShow: {booking_url}"
-
-        # Fast2SMS requires 10-digit mobile number format
         clean_number = self.fast2sms_number.replace("+91", "").strip()
 
         payload = {
@@ -88,7 +145,6 @@ class SMSNotifier:
         if self.ntfy_token:
             headers["Authorization"] = f"Bearer {self.ntfy_token}"
 
-
         body = f"🚨 Bookings are LIVE for {date_str}!\nOpen BookMyShow: {booking_url}"
 
         try:
@@ -104,17 +160,21 @@ class SMSNotifier:
             return False
 
     def send_notification(self, movie_title: str, date_str: str, booking_url: str) -> bool:
-        """Dispatches notification via Fast2SMS (and optional ntfy.sh)"""
+        """Dispatches notification via Fast2SMS, Twilio Voice Call, and ntfy.sh"""
         logger.info(f"--- PREPARING ALERT NOTIFICATION ---")
         logger.info(f"Movie: {movie_title} | Date: {date_str} | URL: {booking_url}")
 
         sent_any = False
 
-        # Dispatch Fast2SMS
+        # Channel 1: Fast2SMS Text Message
         if self.send_fast2sms(movie_title, date_str, booking_url):
             sent_any = True
 
-        # Dispatch optional ntfy push
+        # Channel 2: Automated Voice Phone Call
+        if self.send_voice_call(movie_title, date_str):
+            sent_any = True
+
+        # Channel 3: ntfy.sh Push Alert
         if self.send_ntfy(movie_title, date_str, booking_url):
             sent_any = True
 

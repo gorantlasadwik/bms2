@@ -15,6 +15,14 @@ services:
         sync: false
       - key: FAST2SMS_NUMBER
         sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_CALL_FROM
+        sync: false
+      - key: PHONE_CALL_TO
+        sync: false
       - key: NTFY_TOPIC
         sync: false
       - key: NTFY_TOKEN
