@@ -1,0 +1,19 @@
+services:
+  - type: worker
+    name: bookmyshow-monitor
+    env: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: CHECK_INTERVAL
+        value: "30"
+      - key: FAST2SMS_API_KEY
+        sync: false
+      - key: FAST2SMS_NUMBER
+        sync: false
+      - key: NTFY_TOPIC
+        sync: false
+      - key: NTFY_TOKEN
+        sync: false
