@@ -37,6 +37,8 @@ APP_STATE: Dict[str, Any] = {
     "last_check_time": "Initializing...",
     "results": [],
     "urls": DEFAULT_URLS,
+    "monitoring_stopped": False,
+    "stopped_reason": None,
 }
 
 # Global instances
@@ -68,7 +70,6 @@ def execute_check_cycle() -> List[Dict[str, Any]]:
             "error": r.error,
         }
         results_list.append(item)
-
 
     APP_STATE["results"] = results_list
     APP_STATE["last_check_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -148,6 +149,20 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
 
+        if parsed_path == "/api/restart-monitor":
+            # Restart monitor if auto-stopped
+            logger.info("🔄 Monitor restart requested via web dashboard!")
+            APP_STATE["monitoring_stopped"] = False
+            APP_STATE["status"] = "running"
+            APP_STATE["stopped_reason"] = None
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            resp = {"success": True, "message": "Monitoring service resumed!"}
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -196,7 +211,7 @@ def start_public_render_keepalive(interval_seconds: int = 600):
     def run_public_activator():
         render_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER_SERVICE_URL")
         if not render_url:
-            logger.info("ℹ️ RENDER_EXTERNAL_URL not set. (Add RENDER_EXTERNAL_URL=https://bms2.onrender.com in Render env to auto-ping public URL).")
+            logger.info("ℹ️ RENDER_EXTERNAL_URL not set. (Add RENDER_EXTERNAL_URL=https://bms2sadwik.onrender.com in Render env to auto-ping public URL).")
             return
 
         target_url = render_url.rstrip("/") + "/health"
@@ -217,7 +232,6 @@ def start_public_render_keepalive(interval_seconds: int = 600):
 
     activator_thread = threading.Thread(target=run_public_activator, daemon=True)
     activator_thread.start()
-
 
 
 def main():
@@ -254,18 +268,22 @@ def main():
     start_self_ping_activator(port)
     start_public_render_keepalive(interval_seconds=600)
 
-
-    # Tracks notification status per URL: { url: is_currently_notified }
-    notification_state: Dict[str, bool] = {url: False for url in urls}
-
     consecutive_errors = 0
 
     while True:
+        # Check if monitor has auto-stopped because tickets were found
+        if APP_STATE.get("monitoring_stopped", False):
+            logger.info("🛑 Monitor is STOPPED (Tickets found & alert sent). Waiting for manual restart...")
+            time.sleep(30)
+            continue
+
         cycle_start_time = time.time()
         logger.info("🔍 Beginning URL check cycle...")
 
         # Perform live check cycle
         results_list = execute_check_cycle()
+
+        ticket_found = False
 
         for item in results_list:
             url = item["url"]
@@ -282,27 +300,29 @@ def main():
             else:
                 consecutive_errors = max(0, consecutive_errors - 1)
 
-            # Prevent duplicate alerts
+            # AUTO-STOP WHEN ANY URL IS WORKING / LIVE!
             if is_available:
-                if not notification_state.get(url, False):
-                    logger.info(f"🎉 New ticket availability detected for date {date_str}!")
-                    sent = global_notifier.send_notification(
-                        movie_title=item["movie_title"],
-                        date_str=date_str,
-                        booking_url=item["final_url"],
-                    )
-                    if sent or True:
-                        notification_state[url] = True
-                else:
-                    logger.info(
-                        f"Tickets still available for [{date_str}], alert already sent."
-                    )
-            else:
-                if notification_state.get(url, False):
-                    logger.info(
-                        f"State change: Tickets for [{date_str}] no longer available. Resetting alert state."
-                    )
-                    notification_state[url] = False
+                ticket_found = True
+                logger.info("=" * 60)
+                logger.info(f"🎉 TICKET AVAILABILITY FOUND FOR [{date_str}]!")
+                logger.info("📱 Dispatching final alert notification to phone...")
+                logger.info("=" * 60)
+
+                sent = global_notifier.send_notification(
+                    movie_title=item["movie_title"],
+                    date_str=date_str,
+                    booking_url=item["final_url"],
+                )
+
+                # Set stopped state permanently
+                APP_STATE["monitoring_stopped"] = True
+                APP_STATE["status"] = "STOPPED_TICKETS_FOUND"
+                APP_STATE["stopped_reason"] = f"🎉 Tickets LIVE for {date_str}! Alert sent to phone."
+                logger.info("🛑 MONITOR STOPPED AUTOMATICALLY. No further SMS will be sent.")
+                break
+
+        if ticket_found:
+            continue
 
         # Exponential backoff on rate-limiting or consecutive errors
         effective_interval = check_interval

@@ -92,6 +92,29 @@
             font-size: 1rem;
         }
 
+        .stopped-banner {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid var(--accent-green);
+            border-radius: 1rem;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+            display: none;
+        }
+
+        .stopped-banner h3 {
+            color: var(--accent-green);
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .stopped-banner p {
+            color: var(--text-main);
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+        }
+
         .actions-panel {
             background: var(--card-bg);
             border: 1px solid var(--card-border);
@@ -137,6 +160,11 @@
             cursor: pointer;
             transition: all 0.2s ease;
             box-shadow: 0 4px 15px rgba(14, 165, 233, 0.3);
+        }
+
+        .btn-restart {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
         }
 
         .btn:hover {
@@ -266,13 +294,21 @@
 <body>
     <div class="container">
         <header>
-            <div class="logo-badge">
+            <div class="logo-badge" id="headerBadge">
                 <span class="pulse-dot"></span>
-                <span>MONITOR ACTIVE 24/7</span>
+                <span id="headerBadgeText">MONITOR ACTIVE 24/7</span>
             </div>
             <h1>BookMyShow Ticket Tracker</h1>
             <p class="subtitle">Spider-Man INOX The Marina Mall OMR</p>
         </header>
+
+        <div class="stopped-banner" id="stoppedBanner">
+            <h3>🎉 TICKETS FOUND & ALERT DISPATCHED!</h3>
+            <p id="stoppedReasonText">Tickets are live! Monitoring has stopped automatically to prevent duplicate SMS messages.</p>
+            <button class="btn btn-restart" onclick="restartMonitor()">
+                <span>🔄</span> Resume Monitoring Service
+            </button>
+        </div>
 
         <div class="actions-panel">
             <div class="status-summary">
@@ -309,6 +345,20 @@
         function renderDashboard(data) {
             document.getElementById('lastChecked').innerText = `Last checked: ${data.last_check_time || 'Just now'}`;
             
+            const stoppedBanner = document.getElementById('stoppedBanner');
+            const headerBadgeText = document.getElementById('headerBadgeText');
+
+            if (data.monitoring_stopped) {
+                stoppedBanner.style.display = 'block';
+                if (data.stopped_reason) {
+                    document.getElementById('stoppedReasonText').innerText = data.stopped_reason;
+                }
+                headerBadgeText.innerText = 'MONITOR STOPPED (TICKETS FOUND)';
+            } else {
+                stoppedBanner.style.display = 'none';
+                headerBadgeText.innerText = 'MONITOR ACTIVE 24/7';
+            }
+
             const grid = document.getElementById('cardsGrid');
             if (!data.results || data.results.length === 0) {
                 grid.innerHTML = '<div class="card"><p style="color: var(--text-muted);">No check results recorded yet. Worker is starting up...</p></div>';
@@ -357,6 +407,17 @@
                 btnIcon.className = '';
                 btnIcon.innerText = '⚡';
                 btnText.innerText = 'Send Instant Status Alert';
+            }
+        }
+
+        async function restartMonitor() {
+            try {
+                const res = await fetch('/api/restart-monitor', { method: 'POST' });
+                const data = await res.json();
+                showToast('Monitoring resumed!');
+                fetchStatus();
+            } catch (e) {
+                showToast('Failed to restart monitor.', true);
             }
         }
 
