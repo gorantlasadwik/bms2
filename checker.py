@@ -20,19 +20,27 @@ except ImportError:
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Mobile Web Headers that bypass BookMyShow Cloudflare 403 blocks
-MOBILE_HEADERS = {
+# Perfectly matched Desktop Chrome 124 Headers to align with curl_cffi TLS fingerprint
+DESKTOP_CHROME_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://in.bookmyshow.com/",
     "Origin": "https://in.bookmyshow.com",
-    "x-app-code": "WEB",
-    "x-bms-app-name": "WEB",
-    "x-city-code": "CHEN",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Cache-Control": "max-age=0",
 }
 
 
@@ -49,18 +57,17 @@ class CheckResult:
 
 
 class BookMyShowChecker:
-    def __init__(self, timeout: int = 10):
+    def __init__(self, timeout: int = 12):
         self.timeout = timeout
-        self.use_curl_cffi = HAS_CURL_CFFI
-        self._init_scraper()
+        self._init_session()
 
-    def _init_scraper(self):
-        """Initializes scraper using TLS impersonation (curl_cffi) or cloudscraper"""
+    def _init_session(self):
+        """Initializes TLS impersonation session with matching browser profiles"""
         if HAS_CURL_CFFI:
             try:
-                self.session = curl_requests.Session(impersonate="chrome")
-                self.session.headers.update(MOBILE_HEADERS)
-                logger.info("curl_cffi TLS impersonation initialized for BookMyShow checks.")
+                self.session = curl_requests.Session(impersonate="chrome124")
+                self.session.headers.update(DESKTOP_CHROME_HEADERS)
+                logger.info("curl_cffi Chrome 124 TLS impersonation initialized.")
                 return
             except Exception as e:
                 logger.warning(f"curl_cffi init error: {e}")
@@ -70,14 +77,14 @@ class BookMyShowChecker:
                 self.session = cloudscraper.create_scraper(
                     browser={"browser": "chrome", "platform": "windows", "desktop": True}
                 )
-                self.session.headers.update(MOBILE_HEADERS)
-                logger.info("Cloudscraper initialized for BookMyShow checks.")
+                self.session.headers.update(DESKTOP_CHROME_HEADERS)
+                logger.info("Cloudscraper initialized.")
                 return
             except Exception as e:
                 logger.warning(f"Cloudscraper init error: {e}")
 
         self.session = requests.Session()
-        self.session.headers.update(MOBILE_HEADERS)
+        self.session.headers.update(DESKTOP_CHROME_HEADERS)
 
     def parse_date_from_url(self, url: str) -> str:
         """Extract date from URL like 20260731 -> 31 Jul"""
@@ -116,22 +123,28 @@ class BookMyShowChecker:
         return "Spider-Man"
 
     def fetch_url(self, url: str):
-        """Fetches URL using curl_cffi or standard requests session"""
-        if HAS_CURL_CFFI:
-            try:
-                return curl_requests.get(
-                    url,
-                    headers=MOBILE_HEADERS,
-                    impersonate="chrome",
-                    timeout=self.timeout,
-                    allow_redirects=True,
-                )
-            except Exception as e:
-                logger.debug(f"curl_requests fallback: {e}")
+        """Fetches URL using curl_cffi with fallback profiles if 403 occurs"""
+        profiles = ["chrome124", "chrome120", "safari17_0"]
 
+        if HAS_CURL_CFFI:
+            for profile in profiles:
+                try:
+                    res = curl_requests.get(
+                        url,
+                        headers=DESKTOP_CHROME_HEADERS,
+                        impersonate=profile,  # type: ignore
+                        timeout=self.timeout,
+                        allow_redirects=True,
+                    )
+                    if res.status_code == 200:
+                        return res
+                except Exception as e:
+                    logger.debug(f"cffi {profile} attempt error: {e}")
+
+        # Fallback to scraper session
         return self.session.get(
             url,
-            headers=MOBILE_HEADERS,
+            headers=DESKTOP_CHROME_HEADERS,
             timeout=self.timeout,
             allow_redirects=True,
         )
@@ -213,7 +226,6 @@ class BookMyShowChecker:
                         movie_title="Spider-Man",
                         reason=f"Bookings for {date_str} not open yet (redirected to current date)",
                     )
-
 
             # Parse HTML content
             soup = BeautifulSoup(response.text, "html.parser")
