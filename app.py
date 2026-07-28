@@ -171,6 +171,15 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         if parsed_path == "/api/booked-tickets":
+            if not APP_STATE.get("tickets_open_alarm_active", False):
+                logger.warning("Attempted to click 'I Have Booked Tickets' before tickets opened.")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                resp = {"success": False, "message": "⚠️ Bookings are not live yet! This button activates automatically when tickets open."}
+                self.wfile.write(json.dumps(resp).encode("utf-8"))
+                return
+
             logger.info("🎟️ 'I HAVE BOOKED TICKETS' button clicked! Disabling repeating call alarm...")
             date_str = APP_STATE.get("live_ticket_date") or "target date"
             APP_STATE["tickets_open_alarm_active"] = False
@@ -184,6 +193,7 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             resp = {"success": True, "message": "🎟️ Booking confirmed! Repeating phone calls stopped."}
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
+
 
         if parsed_path == "/api/restart-monitor":
             # Restart monitor if auto-stopped
