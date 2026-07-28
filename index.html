@@ -115,6 +115,30 @@
             margin-bottom: 1rem;
         }
 
+        .alarm-banner {
+            background: rgba(244, 63, 94, 0.2);
+            border: 2px solid var(--accent-red);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+            box-shadow: 0 0 25px rgba(244, 63, 94, 0.4);
+            display: none;
+        }
+
+        .alarm-banner h3 {
+            color: var(--accent-red);
+            font-size: 1.3rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+        }
+
+        .alarm-banner p {
+            color: var(--text-main);
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+        }
+
         .actions-panel {
             background: var(--card-bg);
             border: 1px solid var(--card-border);
@@ -172,11 +196,17 @@
             box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
         }
 
+        .btn-ack {
+            background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+            box-shadow: 0 4px 20px rgba(244, 63, 94, 0.5);
+            font-size: 1.05rem;
+            padding: 0.85rem 1.75rem;
+        }
+
         .btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(14, 165, 233, 0.4);
         }
-
 
         .btn:active {
             transform: translateY(0);
@@ -308,9 +338,17 @@
             <p class="subtitle">Spider-Man INOX The Marina Mall OMR</p>
         </header>
 
+        <div class="alarm-banner" id="alarmBanner">
+            <h3>🚨 TICKETS ARE LIVE NOW! CALL ALARM ACTIVE</h3>
+            <p id="alarmReasonText">Phone calls will repeat every 5 minutes until you click below to confirm your booking.</p>
+            <button class="btn btn-ack" id="ackBtn" onclick="confirmBookedTickets()">
+                <span>🎟️</span> I HAVE BOOKED TICKETS (STOP CALLS)
+            </button>
+        </div>
+
         <div class="stopped-banner" id="stoppedBanner">
-            <h3>🎉 TICKETS FOUND & ALERT DISPATCHED!</h3>
-            <p id="stoppedReasonText">Tickets are live! Monitoring has stopped automatically to prevent duplicate SMS messages.</p>
+            <h3>🎉 TICKETS FOUND & BOOKING CONFIRMED!</h3>
+            <p id="stoppedReasonText">Tickets are live! Monitoring has stopped automatically.</p>
             <button class="btn btn-restart" onclick="restartMonitor()">
                 <span>🔄</span> Resume Monitoring Service
             </button>
@@ -331,7 +369,6 @@
                     <span id="callText">Test Voice Call</span>
                 </button>
             </div>
-
         </div>
 
         <div class="cards-grid" id="cardsGrid">
@@ -359,15 +396,25 @@
             document.getElementById('lastChecked').innerText = `Last checked: ${data.last_check_time || 'Just now'}`;
             
             const stoppedBanner = document.getElementById('stoppedBanner');
+            const alarmBanner = document.getElementById('alarmBanner');
             const headerBadgeText = document.getElementById('headerBadgeText');
 
-            if (data.monitoring_stopped) {
+            if (data.tickets_open_alarm_active) {
+                alarmBanner.style.display = 'block';
+                stoppedBanner.style.display = 'none';
+                if (data.stopped_reason) {
+                    document.getElementById('alarmReasonText').innerText = data.stopped_reason;
+                }
+                headerBadgeText.innerText = '🚨 ALARM ACTIVE: REPEATING PHONE CALLS EVERY 5 MINS';
+            } else if (data.monitoring_stopped) {
+                alarmBanner.style.display = 'none';
                 stoppedBanner.style.display = 'block';
                 if (data.stopped_reason) {
                     document.getElementById('stoppedReasonText').innerText = data.stopped_reason;
                 }
-                headerBadgeText.innerText = 'MONITOR STOPPED (TICKETS FOUND)';
+                headerBadgeText.innerText = 'MONITOR STOPPED';
             } else {
+                alarmBanner.style.display = 'none';
                 stoppedBanner.style.display = 'none';
                 headerBadgeText.innerText = 'MONITOR ACTIVE 24/7';
             }
@@ -398,6 +445,24 @@
             `).join('');
         }
 
+        async function confirmBookedTickets() {
+            const btn = document.getElementById('ackBtn');
+            btn.disabled = true;
+            btn.innerText = 'Confirming Booking...';
+
+            try {
+                const res = await fetch('/api/booked-tickets', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.message || 'Booking confirmed! Repeating calls stopped.');
+                fetchStatus();
+            } catch (e) {
+                showToast('Failed to confirm booking.', true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🎟️</span> I HAVE BOOKED TICKETS (STOP CALLS)';
+            }
+        }
+
         async function triggerNotification() {
             const btn = document.getElementById('sendBtn');
             const btnText = document.getElementById('btnText');
@@ -419,7 +484,7 @@
                 btn.disabled = false;
                 btnIcon.className = '';
                 btnIcon.innerText = '⚡';
-                btnText.innerText = 'Send Instant Status Alert';
+                btnText.innerText = 'Send Status Alert';
             }
         }
 
@@ -448,7 +513,6 @@
         }
 
         async function restartMonitor() {
-
             try {
                 const res = await fetch('/api/restart-monitor', { method: 'POST' });
                 const data = await res.json();
@@ -474,9 +538,9 @@
             }, 4000);
         }
 
-        // Fetch on load & auto-refresh every 10s
+        // Fetch on load & auto-refresh every 5s
         fetchStatus();
-        setInterval(fetchStatus, 10000);
+        setInterval(fetchStatus, 5000);
     </script>
 </body>
 </html>

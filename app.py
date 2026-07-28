@@ -39,6 +39,10 @@ APP_STATE: Dict[str, Any] = {
     "urls": DEFAULT_URLS,
     "monitoring_stopped": False,
     "stopped_reason": None,
+    "tickets_open_alarm_active": False,
+    "live_ticket_date": None,
+    "live_ticket_url": None,
+    "last_call_time": 0,
 }
 
 # Global instances
@@ -154,7 +158,6 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             if not global_notifier:
                 global_notifier = SMSNotifier()
 
-
             sent = global_notifier.send_voice_call("Spider-Man", "TEST CALL (WEB DASHBOARD)")
 
             self.send_response(200)
@@ -167,12 +170,31 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
 
+        if parsed_path == "/api/booked-tickets":
+            logger.info("🎟️ 'I HAVE BOOKED TICKETS' button clicked! Disabling repeating call alarm...")
+            date_str = APP_STATE.get("live_ticket_date") or "target date"
+            APP_STATE["tickets_open_alarm_active"] = False
+            APP_STATE["monitoring_stopped"] = True
+            APP_STATE["status"] = "TICKETS_BOOKED_CONFIRMED"
+            APP_STATE["stopped_reason"] = f"🎟️ Booking confirmed for {date_str}! Repeating 5-minute phone calls stopped."
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            resp = {"success": True, "message": "🎟️ Booking confirmed! Repeating phone calls stopped."}
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
         if parsed_path == "/api/restart-monitor":
             # Restart monitor if auto-stopped
             logger.info("🔄 Monitor restart requested via web dashboard!")
+            APP_STATE["tickets_open_alarm_active"] = False
             APP_STATE["monitoring_stopped"] = False
             APP_STATE["status"] = "running"
             APP_STATE["stopped_reason"] = None
+            APP_STATE["live_ticket_date"] = None
+            APP_STATE["live_ticket_url"] = None
+            APP_STATE["last_call_time"] = 0
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -180,7 +202,6 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             resp = {"success": True, "message": "Monitoring service resumed!"}
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
-
 
         self.send_response(404)
         self.end_headers()
@@ -290,9 +311,28 @@ def main():
     consecutive_errors = 0
 
     while True:
-        # Check if monitor has auto-stopped because tickets were found
+        # 5-MINUTE REPEATING ALARM LOOP IF TICKETS ARE LIVE AND UNACKNOWLEDGED
+        if APP_STATE.get("tickets_open_alarm_active", False):
+            now = time.time()
+            last_call = APP_STATE.get("last_call_time", 0)
+            date_str = APP_STATE.get("live_ticket_date", "Target Date")
+            movie_title = "Spider-Man"
+
+            if now - last_call >= 300:  # Every 5 minutes (300 seconds)
+                logger.info("=" * 60)
+                logger.info(f"🚨 5-MINUTE REPEATING ALARM: Placing call for live tickets [{date_str}]...")
+                logger.info("=" * 60)
+
+                global_notifier.send_voice_call(movie_title, date_str)
+                APP_STATE["last_call_time"] = now
+
+            logger.info("🚨 Alarm Active: Waiting for user to click 'I HAVE BOOKED TICKETS' on web dashboard...")
+            time.sleep(20)
+            continue
+
+        # Check if monitor has auto-stopped
         if APP_STATE.get("monitoring_stopped", False):
-            logger.info("🛑 Monitor is STOPPED (Tickets found & alert sent). Waiting for manual restart...")
+            logger.info("🛑 Monitor is STOPPED. Waiting for manual restart...")
             time.sleep(30)
             continue
 
@@ -319,25 +359,31 @@ def main():
             else:
                 consecutive_errors = max(0, consecutive_errors - 1)
 
-            # AUTO-STOP WHEN ANY URL IS WORKING / LIVE!
+            # AUTO-STOP & START 5-MIN REPEATING ALARM WHEN ANY URL IS WORKING / LIVE!
             if is_available:
                 ticket_found = True
                 logger.info("=" * 60)
                 logger.info(f"🎉 TICKET AVAILABILITY FOUND FOR [{date_str}]!")
-                logger.info("📱 Dispatching final alert notification to phone...")
+                logger.info("📱 Dispatching initial Voice Call, SMS & Push Alert...")
                 logger.info("=" * 60)
 
-                sent = global_notifier.send_notification(
+                # Send initial full alert
+                global_notifier.send_notification(
                     movie_title=item["movie_title"],
                     date_str=date_str,
                     booking_url=item["final_url"],
                 )
 
-                # Set stopped state permanently
-                APP_STATE["monitoring_stopped"] = True
-                APP_STATE["status"] = "STOPPED_TICKETS_FOUND"
-                APP_STATE["stopped_reason"] = f"🎉 Tickets LIVE for {date_str}! Alert sent to phone."
-                logger.info("🛑 MONITOR STOPPED AUTOMATICALLY. No further SMS will be sent.")
+                # Activate 5-minute repeating call alarm
+                now = time.time()
+                APP_STATE["tickets_open_alarm_active"] = True
+                APP_STATE["live_ticket_date"] = date_str
+                APP_STATE["live_ticket_url"] = item["final_url"]
+                APP_STATE["last_call_time"] = now
+                APP_STATE["status"] = "TICKETS_LIVE_ALARM_ACTIVE"
+                APP_STATE["stopped_reason"] = f"🚨 TICKETS LIVE for {date_str}! Repeating phone calls active every 5 mins until 'I Have Booked Tickets' button is clicked."
+
+                logger.info("🚨 5-minute repeating phone call alarm ACTIVATED!")
                 break
 
         if ticket_found:
