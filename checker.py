@@ -201,57 +201,7 @@ class BookMyShowChecker:
                     error=f"HTTP_{status_code}"
                 )
 
-            # Check 1: BookMyShow Cinema BuyTickets Showtime Addition Verification
-            if "buytickets" in url or "buytickets" in final_url:
-                raw_text = response.text
-                spider_idx = raw_text.find('"EventTitle":"Spider-Man')
-                if spider_idx == -1:
-                    spider_idx = raw_text.find('Spider-Man: Brand New Day')
 
-                if spider_idx != -1:
-                    next_event_idx = raw_text.find('"EventTitle"', spider_idx + 20)
-                    if next_event_idx != -1:
-                        spider_block = raw_text[spider_idx:next_event_idx]
-                    else:
-                        spider_block = raw_text[spider_idx:spider_idx + 3000]
-
-                    dates = re.findall(r'"ShowDateTime"\s*:\s*"(\d{12})"', spider_block)
-                    logger.info(f"BookMyShow BuyTickets Spider-Man showtimes detected: {dates}")
-
-                    # Baseline showtime on 1 Aug is 202608010900 (09:00 AM)
-                    baseline = ["202608010900"]
-                    new_shows = [d for d in dates if d not in baseline]
-
-                    if len(dates) > 1 or len(new_shows) > 0:
-                        return CheckResult(
-                            url=url,
-                            is_available=True,
-                            status_code=status_code,
-                            final_url=final_url,
-                            date_str=date_str,
-                            movie_title="Spider-Man",
-                            reason=f"NEW SPIDER-MAN SHOWTIME ADDED ON 1 AUG! Total showtimes: {len(dates)} (Showtimes: {', '.join(dates)})",
-                        )
-                    else:
-                        return CheckResult(
-                            url=url,
-                            is_available=False,
-                            status_code=status_code,
-                            final_url=final_url,
-                            date_str=date_str,
-                            movie_title="Spider-Man",
-                            reason="Only baseline 09:00 AM showtime currently listed for Spider-Man on 1 Aug (Waiting for new showtime)",
-                        )
-                else:
-                    return CheckResult(
-                        url=url,
-                        is_available=False,
-                        status_code=status_code,
-                        final_url=final_url,
-                        date_str=date_str,
-                        movie_title="Spider-Man",
-                        reason="Spider-Man not listed on buytickets page yet",
-                    )
 
             # Check 2: Final URL redirection check
 
