@@ -8,7 +8,8 @@ services:
     startCommand: python app.py
     envVars:
       - key: CHECK_INTERVAL
-        value: "30"
+        value: "5"
+
       - key: RENDER_EXTERNAL_URL
         sync: false
       - key: FAST2SMS_API_KEY

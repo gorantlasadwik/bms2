@@ -294,8 +294,9 @@ def main():
     global_checker = BookMyShowChecker(timeout=10)
     global_notifier = SMSNotifier()
 
-    # Load configuration
-    check_interval = int(os.getenv("CHECK_INTERVAL", "30"))
+    # Load configuration (Default check interval set to 5 seconds for fast response)
+    check_interval = int(os.getenv("CHECK_INTERVAL", "5"))
+
     port = int(os.getenv("PORT", "10000"))
 
     # Parse target URLs from env if provided, else use defaults
