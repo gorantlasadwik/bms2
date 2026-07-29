@@ -24,10 +24,11 @@ logging.basicConfig(
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Default URLs to monitor as requested (1 Aug only)
+# Default URLs to monitor as requested (Direct Seat Layout for 1 Aug 2026)
 DEFAULT_URLS = [
-    "https://in.bookmyshow.com/cinemas/CHEN/inox-the-marina-mall-omr/buytickets/INTO/20260801",
+    "https://in.bookmyshow.com/movies/CHEN/seat-layout/ET00502600/INTO/88327/20260801",
 ]
+
 
 
 

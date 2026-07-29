@@ -20,7 +20,7 @@ except ImportError:
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Perfectly matched Desktop Chrome 124 Headers to align with curl_cffi TLS fingerprint
+# Perfectly matched Desktop Chrome 124 Headers
 DESKTOP_CHROME_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -87,7 +87,7 @@ class BookMyShowChecker:
         self.session.headers.update(DESKTOP_CHROME_HEADERS)
 
     def parse_date_from_url(self, url: str) -> str:
-        """Extract date from URL like 20260731 -> 31 Jul"""
+        """Extract date from URL like 20260801 -> 1 Aug"""
         match = re.search(r"(\d{4})(\d{2})(\d{2})$", url)
         if match:
             year, month, day = match.groups()
@@ -100,7 +100,7 @@ class BookMyShowChecker:
                 return f"{int(day)} {month_name}"
             except IndexError:
                 pass
-        return "Unknown Date"
+        return "1 Aug"
 
     def parse_movie_title(self, soup: Optional[BeautifulSoup], url: str) -> str:
         """Extract movie title from environment, page title, or fallback default"""
@@ -120,7 +120,7 @@ class BookMyShowChecker:
             if title_clean and "inox" not in title_clean.lower() and "cinema" not in title_clean.lower():
                 return title_clean
 
-        return "Spider-Man"
+        return "Spider-Man: Brand New Day (3D)"
 
     def fetch_url(self, url: str):
         """Fetches URL using curl_cffi with fallback profiles if 403 occurs"""
@@ -199,9 +199,9 @@ class BookMyShowChecker:
                     error=f"HTTP_{status_code}"
                 )
 
-            # Check 1: Final URL redirection check & Target Date Code validation
+            # Check 1: Final URL redirection check
             original_code = url.strip("/").split("/")[-1]
-            if "buytickets" not in final_url:
+            if "buytickets" not in final_url and "seat-layout" not in final_url:
                 logger.info(f"URL redirected away from ticket booking page: {final_url}")
                 return CheckResult(
                     url=url,
@@ -213,7 +213,7 @@ class BookMyShowChecker:
                     reason="Redirected away from booking page",
                 )
 
-            # If target URL specifies a date code (e.g. 20260731), ensure final_url still points to the same date code
+            # If target URL specifies a date code (e.g. 20260801), ensure final_url still points to the same date code
             if original_code.isdigit() and len(original_code) == 8:
                 if original_code not in final_url:
                     logger.info(f"BookMyShow redirected target date [{original_code}] to fallback date page [{final_url}]")
@@ -232,8 +232,14 @@ class BookMyShowChecker:
             movie_title = self.parse_movie_title(soup, url)
             page_text = response.text.lower()
 
-            # Check 2: Negative availability indicators
+            # Check 2: Negative availability indicators (including seat layout error page)
             unavailability_keywords = [
+                "something is not right",
+                "connectivity issue with the cinema",
+                "proceed with another cinema",
+                "facing some connectivity issue",
+                "error (#5)",
+                "(#5)",
                 "no shows available",
                 "currently unavailable",
                 "shows unavailable for this date",
@@ -245,6 +251,7 @@ class BookMyShowChecker:
             ]
             for kw in unavailability_keywords:
                 if kw in page_text:
+                    logger.info(f"Seat layout unavailable keyword detected: '{kw}'")
                     return CheckResult(
                         url=url,
                         is_available=False,
@@ -252,10 +259,24 @@ class BookMyShowChecker:
                         final_url=final_url,
                         date_str=date_str,
                         movie_title=movie_title,
-                        reason=f"Unavailability keyword found: '{kw}'",
+                        reason=f"Seat section not activated yet ('{kw}')",
                     )
 
-            # Check 3: Positive availability indicators
+            # Check 3: Direct Seat-Layout URL Activation Detection
+            if "seat-layout" in final_url or "seat-layout" in url:
+                # If no error keyword was found, the seat layout page is active!
+                return CheckResult(
+                    url=url,
+                    is_available=True,
+                    status_code=status_code,
+                    final_url=final_url,
+                    date_str=date_str,
+                    movie_title=movie_title,
+                    reason="SEAT LAYOUT ACTIVATED! Seat selection section is open!",
+                )
+
+
+            # Check 4: Positive showtime availability indicators
             showtime_elements = soup.select(
                 ".showtime-pill, .time-pill, .showtimes, .php-showtime, "
                 "[data-showtime], a[href*='seat-layout'], button[data-session-id], "
@@ -273,11 +294,11 @@ class BookMyShowChecker:
                     reason=f"Found {len(showtime_elements)} showtime/booking elements",
                 )
 
-            # Check 4: Inspect Next.js __NEXT_DATA__ JSON payload if present
+            # Check 5: Inspect Next.js __NEXT_DATA__ JSON payload if present
             next_data_script = soup.find("script", id="__NEXT_DATA__")
             if next_data_script and next_data_script.string:
                 json_content = next_data_script.string.lower()
-                if "showtime" in json_content or "sessionid" in json_content:
+                if "showtime" in json_content or "sessionid" in json_content or "seatlayout" in json_content:
                     if "isavailable\":true" in json_content or "\"available\":true" in json_content:
                         return CheckResult(
                             url=url,
@@ -289,7 +310,7 @@ class BookMyShowChecker:
                             reason="Found available showtimes in embedded JSON data",
                         )
 
-            # Check 5: General fallback indicator
+            # Check 6: General fallback indicator
             time_pattern = re.compile(r"\b(1[0-2]|0?[1-9]):[0-5][0-9]\s*(AM|PM)\b", re.IGNORECASE)
             time_matches = time_pattern.findall(response.text)
             if len(time_matches) >= 2:
@@ -310,7 +331,7 @@ class BookMyShowChecker:
                 final_url=final_url,
                 date_str=date_str,
                 movie_title=movie_title,
-                reason="No active showtimes or booking buttons detected",
+                reason="No active showtimes or seat section detected",
             )
 
         except Exception as e:
