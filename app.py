@@ -24,12 +24,12 @@ logging.basicConfig(
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Default URLs to monitor as requested (BookMyShow, District.in & PVR Cinemas for 1 Aug 2026)
+# Default URLs to monitor as requested (BookMyShow & District.in Seat Layouts for 1 Aug 2026)
 DEFAULT_URLS = [
     "https://in.bookmyshow.com/movies/CHEN/seat-layout/ET00502600/INTO/88327/20260801",
     "https://www.district.in/movies/seat-layout/rrfdpndypd?encsessionid=1020778-88327-obal9s-rrfdpndypd&fromdate=2026-08-01&freeseating=false&fromsessions=true&type=CINEMAS&contentid=194537",
-    "https://www.pvrcinemas.com/cinemasessions/Chennai/INOX-The-Marina-Mall,-OMR,-Chennai/232",
 ]
+
 
 
 
