@@ -113,7 +113,7 @@ class BookMyShowChecker:
         if soup and soup.title and soup.title.string:
             title_text = soup.title.string.strip()
             title_clean = re.sub(
-                r"\s*\|\s*(BookMyShow|District|Movie Tickets|Showtimes|Cinema).*$",
+                r"\s*\|\s*(BookMyShow|District|PVR|Movie Tickets|Showtimes|Cinema).*$",
                 "",
                 title_text,
                 flags=re.IGNORECASE,
@@ -155,6 +155,80 @@ class BookMyShowChecker:
         logger.info(f"Checking URL for date [{date_str}]: {url}")
 
         try:
+            # PVR Cinemas Platform Specific Verification (Direct Backend API Query)
+            if "pvrcinemas" in url:
+                try:
+                    pvr_headers = {
+                        "User-Agent": DESKTOP_CHROME_HEADERS["User-Agent"],
+                        "Accept": "application/json, text/plain, */*",
+                        "Content-Type": "application/json",
+                        "Origin": "https://www.pvrcinemas.com",
+                        "Referer": url,
+                        "chain": "INOX",
+                        "city": "Chennai",
+                        "appVersion": "1.0",
+                        "platform": "WEB",
+                        "country": "INDIA",
+                    }
+                    pvr_payload = {"cid": "232", "lat": "0.000", "lng": "0.000"}
+
+                    if HAS_CURL_CFFI:
+                        api_res = curl_requests.post(
+                            "https://api3.pvrcinemas.com/api/v1/booking/content/csessions",
+                            json=pvr_payload,
+                            headers=pvr_headers,
+                            impersonate="chrome124",
+                            timeout=self.timeout
+                        )
+                    else:
+                        api_res = requests.post(
+                            "https://api3.pvrcinemas.com/api/v1/booking/content/csessions",
+                            json=pvr_payload,
+                            headers=pvr_headers,
+                            timeout=self.timeout
+                        )
+
+                    if api_res.status_code == 200:
+                        api_data = api_res.json()
+                        out = api_data.get("output", {}) or {}
+                        cinema_movies = out.get("cinemaMovieSessions", [])
+
+                        spiderman_shows = []
+                        for item in cinema_movies:
+                            m_info = item.get("movieRe", {})
+                            movie_name = (m_info.get("filmName") or "").upper()
+                            if "SPIDER" in movie_name or "SPIDER-MAN" in movie_name:
+                                films = m_info.get("films", [])
+                                for f in films:
+                                    shows = f.get("shows", [])
+                                    for s in shows:
+                                        show_date = str(s.get("showTime") or s.get("date") or "")
+                                        if "2026-08-01" in show_date or "01 Aug" in show_date or "1 Aug" in show_date:
+                                            spiderman_shows.append(s)
+
+                        if len(spiderman_shows) > 0:
+                            return CheckResult(
+                                url=url,
+                                is_available=True,
+                                status_code=200,
+                                final_url=url,
+                                date_str=date_str,
+                                movie_title="Spider-Man",
+                                reason=f"SPIDER-MAN 1 AUG SHOWTIMES LIVE ON PVR! Found {len(spiderman_shows)} active shows!",
+                            )
+                        else:
+                            return CheckResult(
+                                url=url,
+                                is_available=False,
+                                status_code=200,
+                                final_url=url,
+                                date_str=date_str,
+                                movie_title="Spider-Man",
+                                reason="PVR Cinemas: Spider-Man 1 Aug shows not added yet (Only 29-31 Jul listed)",
+                            )
+                except Exception as e:
+                    logger.warning(f"PVR API check error: {e}")
+
             response = self.fetch_url(url)
             status_code = response.status_code
             final_url = str(response.url)
@@ -202,7 +276,7 @@ class BookMyShowChecker:
 
             # Check 1: Final URL redirection check
             original_code = url.strip("/").split("/")[-1]
-            if "buytickets" not in final_url and "seat-layout" not in final_url and "district.in" not in final_url:
+            if "buytickets" not in final_url and "seat-layout" not in final_url and "district.in" not in final_url and "pvrcinemas" not in final_url:
                 logger.info(f"URL redirected away from ticket booking page: {final_url}")
                 return CheckResult(
                     url=url,
@@ -270,7 +344,6 @@ class BookMyShowChecker:
                             )
                     except Exception as e:
                         logger.warning(f"District.in JSON parse error: {e}")
-
 
             # Check 2: Unavailability & Error Page indicators for BookMyShow
             unavailability_keywords = [
