@@ -24,11 +24,13 @@ logging.basicConfig(
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Default URLs to monitor as requested (BookMyShow & District.in Seat Layouts for 1 Aug 2026)
+# Default URLs to monitor as requested (BookMyShow BuyTickets, BookMyShow Seat Layout & District.in)
 DEFAULT_URLS = [
+    "https://in.bookmyshow.com/cinemas/CHEN/inox-the-marina-mall-omr/buytickets/INTO/20260801",
     "https://in.bookmyshow.com/movies/CHEN/seat-layout/ET00502600/INTO/88327/20260801",
     "https://www.district.in/movies/seat-layout/rrfdpndypd?encsessionid=1020778-88327-obal9s-rrfdpndypd&fromdate=2026-08-01&freeseating=false&fromsessions=true&type=CINEMAS&contentid=194537",
 ]
+
 
 
 
@@ -296,8 +298,8 @@ def main():
     global_checker = BookMyShowChecker(timeout=10)
     global_notifier = SMSNotifier()
 
-    # Load configuration (Default check interval set to 5 seconds for fast response)
-    check_interval = int(os.getenv("CHECK_INTERVAL", "5"))
+    # Load configuration (Default check interval set to 180 seconds = 3 minutes as requested)
+    check_interval = int(os.getenv("CHECK_INTERVAL", "180"))
 
     port = int(os.getenv("PORT", "10000"))
 
@@ -312,7 +314,7 @@ def main():
 
     logger.info("=" * 60)
     logger.info("🚀 Starting BookMyShow Monitor Worker & Web Dashboard")
-    logger.info(f"⏱  Check Interval: {check_interval} seconds")
+    logger.info(f"⏱  Check Interval: {check_interval} seconds (3 minutes)")
     logger.info(f"🌐 Dashboard URL: http://localhost:{port}")
     logger.info(f"🔗 Monitoring {len(urls)} target URLs:")
     for u in urls:
@@ -325,6 +327,7 @@ def main():
     start_public_render_keepalive(interval_seconds=600)
 
     consecutive_errors = 0
+    notified_buytickets_urls = set()
 
     while True:
         # FAST 5-SECOND REPEATING PHONE CALL ALARM LOOP WHEN SEAT MAP ACTIVATES
@@ -376,32 +379,48 @@ def main():
             else:
                 consecutive_errors = max(0, consecutive_errors - 1)
 
-            # AUTO-STOP & START 5-MIN REPEATING ALARM WHEN ANY URL IS WORKING / LIVE!
+            # WHEN ANY URL IS WORKING / LIVE:
             if is_available:
-                ticket_found = True
-                logger.info("=" * 60)
-                logger.info(f"🎉 TICKET AVAILABILITY FOUND FOR [{date_str}]!")
-                logger.info("📱 Dispatching initial Voice Call, SMS & Push Alert...")
-                logger.info("=" * 60)
+                if "buytickets" in url:
+                    if url not in notified_buytickets_urls:
+                        logger.info("=" * 60)
+                        logger.info(f"🎉 NEW SPIDER-MAN SHOWTIME ADDED ON BUYTICKETS PAGE [{date_str}]!")
+                        logger.info("📱 Placing SINGLE Voice Call + Fast2SMS SMS + Push Alert...")
+                        logger.info("=" * 60)
 
-                # Send initial full alert
-                global_notifier.send_notification(
-                    movie_title=item["movie_title"],
-                    date_str=date_str,
-                    booking_url=item["final_url"],
-                )
+                        global_notifier.send_notification(
+                            movie_title=item["movie_title"],
+                            date_str=f"{date_str} (NEW SHOWTIME ADDED!)",
+                            booking_url=item["final_url"],
+                        )
+                        notified_buytickets_urls.add(url)
+                else:
+                    # For seat-layout pages: Activate fast 5-second repeating phone call alarm
+                    ticket_found = True
+                    logger.info("=" * 60)
+                    logger.info(f"🎉 TICKET SEAT MAP ACTIVATED FOR [{date_str}]!")
+                    logger.info("📱 Dispatching initial Voice Call, SMS & Push Alert...")
+                    logger.info("=" * 60)
 
-                # Activate 5-minute repeating call alarm
-                now = time.time()
-                APP_STATE["tickets_open_alarm_active"] = True
-                APP_STATE["live_ticket_date"] = date_str
-                APP_STATE["live_ticket_url"] = item["final_url"]
-                APP_STATE["last_call_time"] = now
-                APP_STATE["status"] = "TICKETS_LIVE_ALARM_ACTIVE"
-                APP_STATE["stopped_reason"] = f"🚨 TICKETS LIVE for {date_str}! Repeating phone calls active every 5 mins until 'I Have Booked Tickets' button is clicked."
+                    # Send initial full alert
+                    global_notifier.send_notification(
+                        movie_title=item["movie_title"],
+                        date_str=date_str,
+                        booking_url=item["final_url"],
+                    )
 
-                logger.info("🚨 5-minute repeating phone call alarm ACTIVATED!")
-                break
+                    # Activate 5-second repeating call alarm
+                    now = time.time()
+                    APP_STATE["tickets_open_alarm_active"] = True
+                    APP_STATE["live_ticket_date"] = date_str
+                    APP_STATE["live_ticket_url"] = item["final_url"]
+                    APP_STATE["last_call_time"] = now
+                    APP_STATE["status"] = "TICKETS_LIVE_ALARM_ACTIVE"
+                    APP_STATE["stopped_reason"] = f"🚨 TICKETS LIVE for {date_str}! Repeating phone calls active every 5 seconds until 'I Have Booked Tickets' button is clicked."
+
+                    logger.info("🚨 5-second repeating phone call alarm ACTIVATED!")
+                    break
+
 
         if ticket_found:
             continue
