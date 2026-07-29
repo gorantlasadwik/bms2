@@ -275,7 +275,56 @@ class BookMyShowChecker:
                     except Exception as e:
                         logger.warning(f"District.in JSON parse error: {e}")
 
+            # District.in Cinema Page Verification (Detecting Grey vs Black/Active Spider-Man Showtimes)
+            if ("district.in/movies/" in url or "district.in/movies/" in final_url) and ("CD" in url or "CD" in final_url):
+
+                next_data_script = soup.find("script", id="__NEXT_DATA__")
+                if next_data_script and next_data_script.string:
+                    try:
+                        data = json.loads(next_data_script.string)
+                        page_props = data.get("props", {}).get("pageProps", {})
+                        cin_data = page_props.get("initialState", {}).get("movies", {}).get("cinemaSessions", {})
+
+                        active_spiderman_sessions = []
+                        for sess_key, sess_val in cin_data.items():
+                            if isinstance(sess_val, dict):
+                                arranged = sess_val.get("arrangedSessions", [])
+                                for movie_item in arranged:
+                                    m_name = (movie_item.get("entityName") or "").lower()
+                                    if "spider" in m_name:
+                                        sessions = movie_item.get("sessions", [])
+                                        for s in sessions:
+                                            is_disabled = s.get("disableClick", True)
+                                            seat_class = s.get("seatClass", "greyCol")
+                                            avail = s.get("avail", 0)
+                                            if not is_disabled or seat_class != "greyCol" or avail > 0:
+                                                active_spiderman_sessions.append(s)
+
+                        if len(active_spiderman_sessions) > 0:
+                            return CheckResult(
+                                url=url,
+                                is_available=True,
+                                status_code=status_code,
+                                final_url=final_url,
+                                date_str=date_str,
+                                movie_title="Spider-Man",
+                                reason=f"SPIDER-MAN SHOWTIMES ACTIVATED (BLACK/CLICKABLE) ON DISTRICT! Found {len(active_spiderman_sessions)} active showtimes!",
+                            )
+                        else:
+                            return CheckResult(
+                                url=url,
+                                is_available=False,
+                                status_code=status_code,
+                                final_url=final_url,
+                                date_str=date_str,
+                                movie_title="Spider-Man",
+                                reason="District.in: Spider-Man showtimes currently grey/disabled (Waiting for activation)",
+                            )
+                    except Exception as e:
+                        logger.warning(f"District cinema JSON parse error: {e}")
+
             # Check 2: Unavailability & Error Page indicators for BookMyShow
+
             unavailability_keywords = [
                 "something is not right",
                 "connectivity issue with the cinema",
