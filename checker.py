@@ -221,6 +221,27 @@ class BookMyShowChecker:
 
             # District.in Platform Specific Seat Map Verification
             if "district.in" in url or "district.in" in final_url:
+                # Check 1: Explicit closed text indicators on District.in
+                district_closed_keywords = [
+                    "booking is now closed",
+                    "booking window for this show has closed",
+                    "sorry! booking is now closed",
+                    "booking is closed",
+                    "show has closed",
+                ]
+                for kw in district_closed_keywords:
+                    if kw in page_text:
+                        logger.info(f"District.in closed keyword detected: '{kw}'")
+                        return CheckResult(
+                            url=url,
+                            is_available=False,
+                            status_code=status_code,
+                            final_url=final_url,
+                            date_str=date_str,
+                            movie_title=movie_title,
+                            reason=f"District.in seat section not activated yet ('{kw}')",
+                        )
+
                 next_data_script = soup.find("script", id="__NEXT_DATA__")
                 if next_data_script and next_data_script.string:
                     try:
@@ -249,6 +270,7 @@ class BookMyShowChecker:
                             )
                     except Exception as e:
                         logger.warning(f"District.in JSON parse error: {e}")
+
 
             # Check 2: Unavailability & Error Page indicators for BookMyShow
             unavailability_keywords = [
