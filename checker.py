@@ -223,36 +223,67 @@ class BookMyShowChecker:
             movie_title = self.parse_movie_title(soup, url)
             page_text = response.text.lower()
 
-            # District.in Platform Specific Seat Map Verification
+            # District.in Platform Specific Verification
             if "district.in" in url or "district.in" in final_url:
-                # Check 1: Explicit closed text indicators on District.in
-                district_closed_keywords = [
-                    "booking is now closed",
-                    "booking window for this show has closed",
-                    "sorry! booking is now closed",
-                    "booking is closed",
-                    "show has closed",
-                ]
-                for kw in district_closed_keywords:
-                    if kw in page_text:
-                        logger.info(f"District.in closed keyword detected: '{kw}'")
-                        return CheckResult(
-                            url=url,
-                            is_available=False,
-                            status_code=status_code,
-                            final_url=final_url,
-                            date_str=date_str,
-                            movie_title=movie_title,
-                            reason=f"District.in seat section not activated yet ('{kw}')",
-                        )
+                # TYPE A: District Cinema Overview Page (CD1020778) - Grey vs Black/Active Spider-Man Showtimes
+                if "CD" in url or "CD" in final_url or "inox-the-marina-mall" in url:
+                    next_data_script = soup.find("script", id="__NEXT_DATA__")
+                    if next_data_script and next_data_script.string:
+                        try:
+                            data = json.loads(next_data_script.string)
+                            page_props = data.get("props", {}).get("pageProps", {})
+                            cin_data = page_props.get("initialState", {}).get("movies", {}).get("cinemaSessions", {})
 
-                next_data_script = soup.find("script", id="__NEXT_DATA__")
-                if next_data_script and next_data_script.string:
-                    try:
-                        data = json.loads(next_data_script.string)
-                        page_props = data.get("props", {}).get("pageProps", {})
-                        if not page_props or page_props.get("isError") or not any(k in str(page_props).lower() for k in ["seat", "grid", "categories", "layout"]):
-                            logger.info("District.in seat layout pageProps is empty or inactive.")
+                            active_spiderman_sessions = []
+                            for sess_key, sess_val in cin_data.items():
+                                if isinstance(sess_val, dict):
+                                    arranged = sess_val.get("arrangedSessions", [])
+                                    for movie_item in arranged:
+                                        m_name = (movie_item.get("entityName") or "").lower()
+                                        if "spider" in m_name:
+                                            sessions = movie_item.get("sessions", [])
+                                            for s in sessions:
+                                                is_disabled = s.get("disableClick", True)
+                                                seat_class = s.get("seatClass", "greyCol")
+                                                avail = s.get("avail", 0)
+                                                if not is_disabled or seat_class != "greyCol" or avail > 0:
+                                                    active_spiderman_sessions.append(s)
+
+                            if len(active_spiderman_sessions) > 0:
+                                return CheckResult(
+                                    url=url,
+                                    is_available=True,
+                                    status_code=status_code,
+                                    final_url=final_url,
+                                    date_str=date_str,
+                                    movie_title="Spider-Man",
+                                    reason=f"SPIDER-MAN SHOWTIMES ACTIVATED (BLACK/CLICKABLE) ON DISTRICT! Found {len(active_spiderman_sessions)} active showtimes!",
+                                )
+                            else:
+                                return CheckResult(
+                                    url=url,
+                                    is_available=False,
+                                    status_code=status_code,
+                                    final_url=final_url,
+                                    date_str=date_str,
+                                    movie_title="Spider-Man",
+                                    reason="District.in: Spider-Man showtimes currently grey/disabled (Waiting for activation)",
+                                )
+                        except Exception as e:
+                            logger.warning(f"District cinema JSON parse error: {e}")
+
+                # TYPE B: District Seat Layout URL (seat-layout)
+                else:
+                    district_closed_keywords = [
+                        "booking is now closed",
+                        "booking window for this show has closed",
+                        "sorry! booking is now closed",
+                        "booking is closed",
+                        "show has closed",
+                    ]
+                    for kw in district_closed_keywords:
+                        if kw in page_text:
+                            logger.info(f"District.in closed keyword detected: '{kw}'")
                             return CheckResult(
                                 url=url,
                                 is_available=False,
@@ -260,68 +291,38 @@ class BookMyShowChecker:
                                 final_url=final_url,
                                 date_str=date_str,
                                 movie_title=movie_title,
-                                reason="District.in seat section not activated yet (Waiting for seat map release)",
+                                reason=f"District.in seat section not activated yet ('{kw}')",
                             )
-                        else:
-                            return CheckResult(
-                                url=url,
-                                is_available=True,
-                                status_code=status_code,
-                                final_url=final_url,
-                                date_str=date_str,
-                                movie_title=movie_title,
-                                reason="SEAT MAP ACTIVATED ON DISTRICT.IN! Seats are live for selection!",
-                            )
-                    except Exception as e:
-                        logger.warning(f"District.in JSON parse error: {e}")
 
-            # District.in Cinema Page Verification (Detecting Grey vs Black/Active Spider-Man Showtimes)
-            if ("district.in/movies/" in url or "district.in/movies/" in final_url) and ("CD" in url or "CD" in final_url):
+                    next_data_script = soup.find("script", id="__NEXT_DATA__")
+                    if next_data_script and next_data_script.string:
+                        try:
+                            data = json.loads(next_data_script.string)
+                            page_props = data.get("props", {}).get("pageProps", {})
+                            if not page_props or page_props.get("isError") or not any(k in str(page_props).lower() for k in ["categories", "seatmap", "seatmatrix", "available"]):
+                                logger.info("District.in seat layout pageProps is empty or inactive.")
+                                return CheckResult(
+                                    url=url,
+                                    is_available=False,
+                                    status_code=status_code,
+                                    final_url=final_url,
+                                    date_str=date_str,
+                                    movie_title=movie_title,
+                                    reason="District.in seat section not activated yet (Waiting for seat map release)",
+                                )
+                            else:
+                                return CheckResult(
+                                    url=url,
+                                    is_available=True,
+                                    status_code=status_code,
+                                    final_url=final_url,
+                                    date_str=date_str,
+                                    movie_title=movie_title,
+                                    reason="SEAT MAP ACTIVATED ON DISTRICT.IN! Seats are live for selection!",
+                                )
+                        except Exception as e:
+                            logger.warning(f"District.in JSON parse error: {e}")
 
-                next_data_script = soup.find("script", id="__NEXT_DATA__")
-                if next_data_script and next_data_script.string:
-                    try:
-                        data = json.loads(next_data_script.string)
-                        page_props = data.get("props", {}).get("pageProps", {})
-                        cin_data = page_props.get("initialState", {}).get("movies", {}).get("cinemaSessions", {})
-
-                        active_spiderman_sessions = []
-                        for sess_key, sess_val in cin_data.items():
-                            if isinstance(sess_val, dict):
-                                arranged = sess_val.get("arrangedSessions", [])
-                                for movie_item in arranged:
-                                    m_name = (movie_item.get("entityName") or "").lower()
-                                    if "spider" in m_name:
-                                        sessions = movie_item.get("sessions", [])
-                                        for s in sessions:
-                                            is_disabled = s.get("disableClick", True)
-                                            seat_class = s.get("seatClass", "greyCol")
-                                            avail = s.get("avail", 0)
-                                            if not is_disabled or seat_class != "greyCol" or avail > 0:
-                                                active_spiderman_sessions.append(s)
-
-                        if len(active_spiderman_sessions) > 0:
-                            return CheckResult(
-                                url=url,
-                                is_available=True,
-                                status_code=status_code,
-                                final_url=final_url,
-                                date_str=date_str,
-                                movie_title="Spider-Man",
-                                reason=f"SPIDER-MAN SHOWTIMES ACTIVATED (BLACK/CLICKABLE) ON DISTRICT! Found {len(active_spiderman_sessions)} active showtimes!",
-                            )
-                        else:
-                            return CheckResult(
-                                url=url,
-                                is_available=False,
-                                status_code=status_code,
-                                final_url=final_url,
-                                date_str=date_str,
-                                movie_title="Spider-Man",
-                                reason="District.in: Spider-Man showtimes currently grey/disabled (Waiting for activation)",
-                            )
-                    except Exception as e:
-                        logger.warning(f"District cinema JSON parse error: {e}")
 
             # Check 2: Unavailability & Error Page indicators for BookMyShow
 
