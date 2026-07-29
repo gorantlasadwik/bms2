@@ -24,11 +24,11 @@ logging.basicConfig(
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Default URLs to monitor as requested (31 Jul and 1 Aug)
+# Default URLs to monitor as requested (1 Aug only)
 DEFAULT_URLS = [
-    "https://in.bookmyshow.com/cinemas/CHEN/inox-the-marina-mall-omr/buytickets/INTO/20260731",
     "https://in.bookmyshow.com/cinemas/CHEN/inox-the-marina-mall-omr/buytickets/INTO/20260801",
 ]
+
 
 
 # Shared Global State for Dashboard & API
@@ -132,7 +132,8 @@ class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
             if available_dates:
                 summary = f"BOOKINGS LIVE for {', '.join(available_dates)}!"
             else:
-                summary = "Bookings NOT OPEN yet (Checked: 31 Jul, 1 Aug)."
+                summary = "Bookings NOT OPEN yet (Checked: 1 Aug)."
+
 
 
             # Dispatch notification
