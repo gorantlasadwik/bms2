@@ -262,10 +262,8 @@ def start_public_render_keepalive(interval_seconds: int = 600):
     """Pings the public Render HTTPS URL every 10 minutes to prevent Render 15-minute sleep"""
 
     def run_public_activator():
-        render_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER_SERVICE_URL")
-        if not render_url:
-            logger.info("ℹ️ RENDER_EXTERNAL_URL not set. (Add RENDER_EXTERNAL_URL=https://bms2sadwik.onrender.com in Render env to auto-ping public URL).")
-            return
+        render_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER_SERVICE_URL") or "https://bms2sadwik.onrender.com"
+
 
         target_url = render_url.rstrip("/") + "/health"
         logger.info(f"⚡ Public 24/7 Keep-Alive Activator started for: {target_url}")

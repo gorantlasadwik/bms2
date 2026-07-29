@@ -232,7 +232,7 @@ class BookMyShowChecker:
             movie_title = self.parse_movie_title(soup, url)
             page_text = response.text.lower()
 
-            # Check 2: Negative availability indicators (including seat layout error page)
+            # Check 2: Unavailability & Error Page indicators (including "Something is not right #5" refresh page)
             unavailability_keywords = [
                 "something is not right",
                 "connectivity issue with the cinema",
@@ -240,6 +240,7 @@ class BookMyShowChecker:
                 "facing some connectivity issue",
                 "error (#5)",
                 "(#5)",
+                "#5",
                 "no shows available",
                 "currently unavailable",
                 "shows unavailable for this date",
@@ -251,7 +252,7 @@ class BookMyShowChecker:
             ]
             for kw in unavailability_keywords:
                 if kw in page_text:
-                    logger.info(f"Seat layout unavailable keyword detected: '{kw}'")
+                    logger.info(f"Unavailability/error page keyword detected: '{kw}'")
                     return CheckResult(
                         url=url,
                         is_available=False,
@@ -259,24 +260,47 @@ class BookMyShowChecker:
                         final_url=final_url,
                         date_str=date_str,
                         movie_title=movie_title,
-                        reason=f"Seat section not activated yet ('{kw}')",
+                        reason=f"Seat section not activated yet (Showing '#5' error refresh page)",
                     )
 
-            # Check 3: Direct Seat-Layout URL Activation Detection
+            # Check 3: Direct Seat-Layout URL Strict Verification
             if "seat-layout" in final_url or "seat-layout" in url:
-                # If no error keyword was found, the seat layout page is active!
-                return CheckResult(
-                    url=url,
-                    is_available=True,
-                    status_code=status_code,
-                    final_url=final_url,
-                    date_str=date_str,
-                    movie_title=movie_title,
-                    reason="SEAT LAYOUT ACTIVATED! Seat selection section is open!",
-                )
+                # Require active seat layout data payload keywords in text
+                active_seat_keywords = [
+                    "seatlayoutdata",
+                    "seatmap",
+                    "categories",
+                    "availableseats",
+                    "seat-container",
+                    "seat-matrix",
+                    "data-seat-id",
+                    "ticket-picker",
+                ]
+                has_active_seat_data = any(k in page_text for k in active_seat_keywords)
 
+                if has_active_seat_data:
+                    return CheckResult(
+                        url=url,
+                        is_available=True,
+                        status_code=status_code,
+                        final_url=final_url,
+                        date_str=date_str,
+                        movie_title=movie_title,
+                        reason="SEAT LAYOUT ACTIVATED! Seat selection section is live!",
+                    )
+                else:
+                    logger.info("Seat layout page loaded but active seat payload is missing (in Refresh/Error state).")
+                    return CheckResult(
+                        url=url,
+                        is_available=False,
+                        status_code=status_code,
+                        final_url=final_url,
+                        date_str=date_str,
+                        movie_title=movie_title,
+                        reason="Seat section not activated yet (Showing '#5' error refresh page)",
+                    )
 
-            # Check 4: Positive showtime availability indicators
+            # Check 4: Positive showtime availability indicators on buytickets page
             showtime_elements = soup.select(
                 ".showtime-pill, .time-pill, .showtimes, .php-showtime, "
                 "[data-showtime], a[href*='seat-layout'], button[data-session-id], "
@@ -309,20 +333,6 @@ class BookMyShowChecker:
                             movie_title=movie_title,
                             reason="Found available showtimes in embedded JSON data",
                         )
-
-            # Check 6: General fallback indicator
-            time_pattern = re.compile(r"\b(1[0-2]|0?[1-9]):[0-5][0-9]\s*(AM|PM)\b", re.IGNORECASE)
-            time_matches = time_pattern.findall(response.text)
-            if len(time_matches) >= 2:
-                return CheckResult(
-                    url=url,
-                    is_available=True,
-                    status_code=status_code,
-                    final_url=final_url,
-                    date_str=date_str,
-                    movie_title=movie_title,
-                    reason=f"Found {len(time_matches)} showtime timestamps on page",
-                )
 
             return CheckResult(
                 url=url,
