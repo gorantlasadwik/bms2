@@ -1,4 +1,5 @@
 import re
+import json
 import logging
 import urllib.parse
 from dataclasses import dataclass
@@ -87,8 +88,8 @@ class BookMyShowChecker:
         self.session.headers.update(DESKTOP_CHROME_HEADERS)
 
     def parse_date_from_url(self, url: str) -> str:
-        """Extract date from URL like 20260801 -> 1 Aug"""
-        match = re.search(r"(\d{4})(\d{2})(\d{2})$", url)
+        """Extract date from URL like 20260801 or fromdate=2026-08-01 -> 1 Aug"""
+        match = re.search(r"(\d{4})[-_]?(\d{2})[-_]?(\d{2})", url)
         if match:
             year, month, day = match.groups()
             months = [
@@ -112,7 +113,7 @@ class BookMyShowChecker:
         if soup and soup.title and soup.title.string:
             title_text = soup.title.string.strip()
             title_clean = re.sub(
-                r"\s*\|\s*(BookMyShow|Movie Tickets|Showtimes|Cinema).*$",
+                r"\s*\|\s*(BookMyShow|District|Movie Tickets|Showtimes|Cinema).*$",
                 "",
                 title_text,
                 flags=re.IGNORECASE,
@@ -201,7 +202,7 @@ class BookMyShowChecker:
 
             # Check 1: Final URL redirection check
             original_code = url.strip("/").split("/")[-1]
-            if "buytickets" not in final_url and "seat-layout" not in final_url:
+            if "buytickets" not in final_url and "seat-layout" not in final_url and "district.in" not in final_url:
                 logger.info(f"URL redirected away from ticket booking page: {final_url}")
                 return CheckResult(
                     url=url,
@@ -213,26 +214,43 @@ class BookMyShowChecker:
                     reason="Redirected away from booking page",
                 )
 
-            # If target URL specifies a date code (e.g. 20260801), ensure final_url still points to the same date code
-            if original_code.isdigit() and len(original_code) == 8:
-                if original_code not in final_url:
-                    logger.info(f"BookMyShow redirected target date [{original_code}] to fallback date page [{final_url}]")
-                    return CheckResult(
-                        url=url,
-                        is_available=False,
-                        status_code=status_code,
-                        final_url=final_url,
-                        date_str=date_str,
-                        movie_title="Spider-Man",
-                        reason=f"Bookings for {date_str} not open yet (redirected to current date)",
-                    )
-
             # Parse HTML content
             soup = BeautifulSoup(response.text, "html.parser")
             movie_title = self.parse_movie_title(soup, url)
             page_text = response.text.lower()
 
-            # Check 2: Unavailability & Error Page indicators (including "Something is not right #5" refresh page)
+            # District.in Platform Specific Seat Map Verification
+            if "district.in" in url or "district.in" in final_url:
+                next_data_script = soup.find("script", id="__NEXT_DATA__")
+                if next_data_script and next_data_script.string:
+                    try:
+                        data = json.loads(next_data_script.string)
+                        page_props = data.get("props", {}).get("pageProps", {})
+                        if not page_props or page_props.get("isError") or not any(k in str(page_props).lower() for k in ["seat", "grid", "categories", "layout"]):
+                            logger.info("District.in seat layout pageProps is empty or inactive.")
+                            return CheckResult(
+                                url=url,
+                                is_available=False,
+                                status_code=status_code,
+                                final_url=final_url,
+                                date_str=date_str,
+                                movie_title=movie_title,
+                                reason="District.in seat section not activated yet (Waiting for seat map release)",
+                            )
+                        else:
+                            return CheckResult(
+                                url=url,
+                                is_available=True,
+                                status_code=status_code,
+                                final_url=final_url,
+                                date_str=date_str,
+                                movie_title=movie_title,
+                                reason="SEAT MAP ACTIVATED ON DISTRICT.IN! Seats are live for selection!",
+                            )
+                    except Exception as e:
+                        logger.warning(f"District.in JSON parse error: {e}")
+
+            # Check 2: Unavailability & Error Page indicators for BookMyShow
             unavailability_keywords = [
                 "something is not right",
                 "connectivity issue with the cinema",
@@ -263,9 +281,8 @@ class BookMyShowChecker:
                         reason=f"Seat section not activated yet (Showing '#5' error refresh page)",
                     )
 
-            # Check 3: Direct Seat-Layout URL Strict Verification
+            # Check 3: Direct Seat-Layout URL Strict Verification for BookMyShow
             if "seat-layout" in final_url or "seat-layout" in url:
-                # Require active seat layout data payload keywords in text
                 active_seat_keywords = [
                     "seatlayoutdata",
                     "seatmap",
@@ -289,7 +306,7 @@ class BookMyShowChecker:
                         reason="SEAT LAYOUT ACTIVATED! Seat selection section is live!",
                     )
                 else:
-                    logger.info("Seat layout page loaded but active seat payload is missing (in Refresh/Error state).")
+                    logger.info("Seat layout page loaded but active seat payload is missing.")
                     return CheckResult(
                         url=url,
                         is_available=False,
@@ -317,22 +334,6 @@ class BookMyShowChecker:
                     movie_title=movie_title,
                     reason=f"Found {len(showtime_elements)} showtime/booking elements",
                 )
-
-            # Check 5: Inspect Next.js __NEXT_DATA__ JSON payload if present
-            next_data_script = soup.find("script", id="__NEXT_DATA__")
-            if next_data_script and next_data_script.string:
-                json_content = next_data_script.string.lower()
-                if "showtime" in json_content or "sessionid" in json_content or "seatlayout" in json_content:
-                    if "isavailable\":true" in json_content or "\"available\":true" in json_content:
-                        return CheckResult(
-                            url=url,
-                            is_available=True,
-                            status_code=status_code,
-                            final_url=final_url,
-                            date_str=date_str,
-                            movie_title=movie_title,
-                            reason="Found available showtimes in embedded JSON data",
-                        )
 
             return CheckResult(
                 url=url,

@@ -24,10 +24,12 @@ logging.basicConfig(
 
 logger = logging.getLogger("BookMyShowMonitor")
 
-# Default URLs to monitor as requested (Direct Seat Layout for 1 Aug 2026)
+# Default URLs to monitor as requested (BookMyShow & District.in Seat Layouts for 1 Aug 2026)
 DEFAULT_URLS = [
     "https://in.bookmyshow.com/movies/CHEN/seat-layout/ET00502600/INTO/88327/20260801",
+    "https://www.district.in/movies/seat-layout/rrfdpndypd?encsessionid=1020778-88327-obal9s-rrfdpndypd&fromdate=2026-08-01&freeseating=false&fromsessions=true&type=CINEMAS&contentid=194537",
 ]
+
 
 
 
@@ -323,24 +325,25 @@ def main():
     consecutive_errors = 0
 
     while True:
-        # 5-MINUTE REPEATING ALARM LOOP IF TICKETS ARE LIVE AND UNACKNOWLEDGED
+        # FAST 5-SECOND REPEATING PHONE CALL ALARM LOOP WHEN SEAT MAP ACTIVATES
         if APP_STATE.get("tickets_open_alarm_active", False):
             now = time.time()
             last_call = APP_STATE.get("last_call_time", 0)
             date_str = APP_STATE.get("live_ticket_date", "Target Date")
             movie_title = "Spider-Man"
 
-            if now - last_call >= 300:  # Every 5 minutes (300 seconds)
+            if now - last_call >= 5:  # Every 5 seconds as requested
                 logger.info("=" * 60)
-                logger.info(f"🚨 5-MINUTE REPEATING ALARM: Placing call for live tickets [{date_str}]...")
+                logger.info(f"🚨 FAST 5-SECOND REPEATING ALARM: Placing phone call for live seat map [{date_str}]...")
                 logger.info("=" * 60)
 
                 global_notifier.send_voice_call(movie_title, date_str)
                 APP_STATE["last_call_time"] = now
 
-            logger.info("🚨 Alarm Active: Waiting for user to click 'I HAVE BOOKED TICKETS' on web dashboard...")
-            time.sleep(20)
+            logger.info("🚨 Alarm Active: Calling every 5 seconds until 'I HAVE BOOKED TICKETS' is clicked on dashboard...")
+            time.sleep(5)
             continue
+
 
         # Check if monitor has auto-stopped
         if APP_STATE.get("monitoring_stopped", False):
